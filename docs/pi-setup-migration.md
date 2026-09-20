@@ -42,7 +42,7 @@ Cơ chế này có trong `docs/packages.md` của pi và đã được kiểm ch
 
 | Mục trong `~/.pi/agent/` | Size | Vào repo? | Lý do |
 |---|---|---|---|
-| `settings.json` | 4 KB | ✅ **bắt buộc** | 22 packages, `enabledModels`, theme, compaction, thinkingBudgets, retry |
+| `settings.json` | 4 KB | ✅ **bắt buộc** | 24 packages, `enabledModels`, theme, compaction, thinkingBudgets, retry |
 | `APPEND_SYSTEM.md` | 4 KB | ✅ | system prompt phụ |
 | `extensions/` | 1.3 MB | ✅ (lọc) | extension tự viết local + config của chúng. `orca-*.ts` (Orca sinh) và `agentkit-*` (AgentKit sinh) bị loại — xem `.pi-setup-exclude` |
 | `extensions/pi-footer.json` | 1.3 KB | ✅ **mặc định** | layout statusline (gồm context bar) — opt-out bằng `--no-statusline` |
@@ -51,6 +51,7 @@ Cơ chế này có trong `docs/packages.md` của pi và đã được kiểm ch
 | `models-store.json` | 28 KB | ✅ | catalog model; có sẵn thì khỏi chờ refresh 4 giờ |
 | `99extensions.json` | — | ✅ **mặc định** | config họ 99percentpeople (`@99percentpeople/pi-todo`), ở gốc config dir; chỉ có sau khi dùng `/99settings` |
 | `~/.unipi/config/notify/config.json` | — | ❌ **credential** | config `@pi-unipi/notify`: chứa token Gotify + botToken/chatId Telegram → **cố ý** không đưa vào; máy mới chạy lại `/unipi:notify-set-gotify` + `/unipi:notify-set-tg` |
+| `~/.multix/.env` | 69 B | ❌ **credential** | credential cho `pi-multix` (multix CLI); nằm **ngoài** config dir và **không** có trong `EXTERNAL_CONFIGS` → tạo lại trên máy mới |
 | `~/.pi-lens/config.json` | 136 B | ✅ **mặc định** | config `pi-lens`, nằm **NGOÀI** config dir → lấy qua `EXTERNAL_CONFIGS`, vào artifact thành `pi-lens-config.json` + manifest `external-configs.txt` (⚠️ **không** đặt tên artifact là `pi-lens.json`: trùng basename legacy của pi-lens → bị đọc như project config deprecated, xem README) |
 | `advisor.json` | — | ✅ **mặc định** | config `pi-advisor-flow`, ở **gốc** config dir (không trong `extensions/`) nên liệt kê riêng; chỉ có sau `/advisor` hoặc `/advisor-settings` |
 | `advisor-outcomes.jsonl`, `advisor-outcomes-salt` | — | ❌ | log outcome + salt theo máy của `pi-advisor-flow` → nằm trong `.pi-setup-exclude` |
@@ -78,18 +79,23 @@ zuey-pi-setup/
 ├── scripts/
 │   ├── pi-setup-backup.sh           ← đóng gói setup hiện tại
 │   ├── pi-setup-restore.sh          ← dựng lại trên máy mới
-│   └── pi-setup-verify-advisor.mjs  ← kiểm tra advisor.json theo schema thật
+│   ├── pi-setup-verify-advisor.mjs  ← kiểm tra advisor.json theo schema thật
+│   ├── pi-lens-compact-lsp-status.mjs  ← vá dòng status LSP của pi-lens
+│   └── pi-setup-patch-extensions.mjs   ← vá stale-ctx ở pi-footer + pi-goal-x
 └── config/                          ← snapshot setup, đọc/diff được
     ├── .pi-setup-exclude           ← glob loại trừ (backup tôn trọng file này)
     ├── settings.json
     ├── APPEND_SYSTEM.md
     ├── models-store.json
+    ├── advisor.json
+    ├── model-fallback/config.json
     └── extensions/
+        ├── compaction-policy.ts
         ├── pi-footer-cache-tps.ts
         └── pi-footer.json
 ```
 
-`config/` là **mirror** của `~/.pi/agent` (chỉ 4 mục setup). Cập nhật lại sau khi bạn đổi setup:
+`config/` là **mirror** của `~/.pi/agent` (chỉ các mục *setup*: settings, models-store, advisor, model-fallback, extensions...). Cập nhật lại sau khi bạn đổi setup:
 
 ```bash
 ./scripts/pi-setup-backup.sh --config-dir config
@@ -165,7 +171,7 @@ Script là **bash** → trên Windows chạy trong **Git Bash** (hoặc WSL). Po
 | Symlink | Repo chỉ **đọc/backup** symlink có sẵn → không cần Developer Mode |
 | **Font terminal** | `iconMode: "nerd"` cần **Nerd Font bản Mono**. Dùng JetBrains Mono **gốc** (bản trong `fonts/`) → icon vỡ thành ◆/✦/`?` vì thiếu **11/11** codepoint PUA. Sửa: trỏ terminal vào `DankMono Nerd Font Mono` (hoặc Nerd Font khác), hoặc đổi `iconMode` sang `emoji`/`text` |
 
-Số đo thật trên **Windows 11 + Git Bash (MSYS2, bash 5.3)**: restore `20/20`, cài **88 s**, module dirs `0 → 203`.
+Số đo thật trên **Windows 11 + Git Bash (MSYS2, bash 5.3)**: restore `24/24`, cài **123 s**, module dirs `0 → 281` (payload 20 package trước đó: `20/20` · 88 s · `0 → 203`).
 
 ---
 
@@ -210,7 +216,7 @@ Config: `~/.pi/agent/model-fallback/config.json` → **backup mặc định** (s
 
 ## Scripts
 
-Hai script setup **không hỏi xác nhận** — rủi ro được xử lý bằng snapshot + cảnh báo ra `stderr`, để chạy được trong script/CI. Script thứ ba chỉ **đọc**; script thứ tư sửa **một file** trong bundle pi-lens đã cài (rút gọn dòng status LSP).
+Hai script setup **không hỏi xác nhận** — rủi ro được xử lý bằng snapshot + cảnh báo ra `stderr`, để chạy được trong script/CI. Ba script còn lại: một chỉ **đọc** (`pi-setup-verify-advisor.mjs`); hai script kia vá file trong package bên thứ ba đã cài (`pi-lens`, `pi-footer`, `pi-goal-x`) và đều dừng với exit `2` thay vì đoán khi code đổi định dạng.
 
 ### `pi-setup-verify-advisor.mjs`
 
@@ -250,6 +256,28 @@ Kết quả: `LSP ✓` (xanh) khi có server, `LSP ✗` (đỏ) khi có server l
 > ⚠ `pi update` ghi đè `pi-lens/dist/index.js` → chạy lại script này sau mỗi lần update.
 
 Script ghi bundle theo kiểu **atomic** (file tạm + rename), và nhận diện riêng trạng thái **vá dở** (lần chạy trước bị ngắt) để hoàn tất nốt thay vì từ chối. Anchor thiếu hoặc lặp → dừng với exit `1` kèm gợi ý cài lại pi-lens.
+
+### `pi-setup-patch-extensions.mjs`
+
+Hai package bên thứ ba giữ `ExtensionContext` trong hàm chạy **về sau**: `render()` của `pi-footer` (→ `collectStatuslineData` → `ctx.getContextUsage()`) và widget goal của `pi-goal-x` (hai getter `getSettings` → `loadGoalSettings(ctx.cwd)` và `getLedgerEvents` → `goalActivityEvents(ctx, …)` chạy ở **mỗi** frame render). `/reload` invalidate runner cũ, và pi coi mọi truy cập ctx cũ là lỗi fatal → process chết với `Error: This extension ctx is stale after session replacement or reload`.
+
+| Vá | Cách sửa |
+|---|---|
+| `pi-footer` | bọc đúng chỗ dùng ctx trong `render()` bằng try/catch, trả `[]` cho frame đó; host gắn lại footer với ctx mới ở `session_start` kế tiếp |
+| `pi-goal-x` | chụp `cwd` (chuỗi thuần — `GoalLedgerContext` chỉ cần chừng đó) lúc đăng ký widget, nên cả hai getter đọc biến đó và đường render không còn đụng ctx |
+
+```bash
+node scripts/pi-setup-patch-extensions.mjs           # vá cả hai (idempotent, backup trước)
+node scripts/pi-setup-patch-extensions.mjs --check   # chỉ báo trạng thái: 0 = đã vá hết, 1 = còn thiếu
+```
+
+| Exit | Nghĩa |
+|---|---|
+| `0` | đã vá hết (hoặc vừa vá xong) |
+| `1` | còn thiếu khi chạy `--check`, hoặc ghi xong mà không thấy guard → tự khôi phục bản gốc từ backup |
+| `2` | lỗi môi trường: không thấy package, hoặc code đổi định dạng nên anchor không khớp (script **không** đoán) |
+
+> ⚠ Cả hai bản vá nằm trong `node_modules` → **chạy lại sau mỗi `pi update`** hoặc cài lại package (và một lần sau khi restore). Tại thời điểm snapshot cả hai lỗi **chưa** được sửa upstream: `pi-footer@0.5.1` và `pi-goal-x@0.31.6` là bản mới nhất.
 
 ### `scripts/pi-setup-backup.sh`
 
@@ -332,15 +360,16 @@ Cách test: restore vào một config dir **hoàn toàn mới** qua biến `PI_C
 | `auth.json` trong dir mới | `{}` → **không rò secret** |
 | Chạy lần 2 | log rỗng (0 byte) → **idempotent** |
 
-### Đường `--from-config config` (payload 20 package lúc đo — 2026-09-15; snapshot hiện tại là 22 package, **chưa đo lại**)
+### Đường `--from-config config` (đo lại với snapshot **24 package** — 21/09/2026)
 
 | Kiểm tra | Kết quả |
 |---|---|
-| Restore vào dir mới | ✅ `settings.json APPEND_SYSTEM.md models-store.json advisor.json extensions` + config ngoài `~/.pi-lens/config.json` |
-| Cài 20 extension | ✅ **246 s**, module dirs `0 → 203` |
-| `--verify` | ✅ **`20/20 extension khớp`** |
-| Extension có **chạy** không | ✅ 18 `extension_ui_request`, 0 lỗi load, thấy `pi-lens-lsp` |
-| `pi list` trong bản restore | ✅ 20 package |
+| Restore vào dir mới | ✅ `settings.json APPEND_SYSTEM.md models-store.json advisor.json model-fallback/config.json extensions` + config ngoài `~/.pi-lens/config.json` |
+| Cài 24 extension | ✅ **123 s**, module dirs `0 → 281` (payload 20 package trước đó: 246 s, `0 → 203`) |
+| `--verify` | ✅ **`24/24 extension khớp`** |
+| `settings.json` sau restore | ✅ **trùng byte** với `config/settings.json` |
+| Extension có **chạy** không | ✅ 26 `extension_ui_request`, 0 lỗi load; notification lỗi duy nhất là `Advisor models are not configured or available` (đúng với dir mới chưa chạy `/advisor`) |
+| `pi list` trong bản restore | ✅ 24 package |
 | Snapshot bản config ngoài cũ | ✅ tự tạo `config.json.bak.<timestamp>` trước khi ghi đè |
 
 ### Snapshot 19 package
@@ -417,10 +446,10 @@ cd /tmp/verify-clone
 
 | Kiểm tra | Kết quả |
 |---|---|
-| Restore thật (`--from-config config --install --verify`) | ✅ **20/20**, cài **88 s**, module dirs `0 → 203` |
+| Restore thật (`--from-config config --scratch --install --verify`) | ✅ **24/24**, cài **123 s**, module dirs `0 → 281` |
 | Config ngoài config dir | ✅ ghi đúng `%USERPROFILE%\.pi-lens\config.json`, khớp `config/pi-lens-config.json` |
 | MSYS convert path cho `pi` con | ✅ `/tmp/...` → `C:/Users/.../Temp/...` |
-| Tạo lại bundle trên Windows | ✅ 9 file, 7.9 KB, sạch (không có `._*` AppleDouble như bản tạo trên macOS) |
+| Tạo lại bundle trên Windows | ✅ 10 file, 11.2 KB, sạch (không có `._*` AppleDouble như bản tạo trên macOS), sha256 `280de9d0…` |
 | Đếm package bằng `node` (không cần `python3`) | ✅ ra `20` |
 | Script CRLF | ✅ bash 5.3.15 chịu CRLF (test bằng bản copy CRLF, exit 0) |
 
@@ -475,12 +504,18 @@ Nó công bố status key `pi-lens-lsp` (`LSP Active: ts` / `LSP Inactive`) → 
 
 Config ngoài config dir được mang theo bằng `EXTERNAL_CONFIGS` + manifest `external-configs.txt` (dùng dạng `~`, không lộ path máy); restore tự `mkdir -p` và snapshot bản cũ.
 
+**Compaction: hai knob, không phải một.** `pi` core quyết định **bản tóm tắt được dài bao nhiêu**: `min(floor(0.8 × compaction.reserveTokens), model.maxTokens)` (lượt turn-prefix `0.5×`). Mặc định `reserveTokens: 16384` → trần **13.107 token**; bản tóm tắt kiểu UPDATE dài dần đơn điệu (đo thật: 6.012 → 11.286 → 10.283 → 12.659), nên session dài vỡ với `generation hit the token cap and the summary is incomplete`. Vì vậy snapshot đặt `compaction.modelOverrides` (`reserveTokens: 60000`) cho 5 model ≥500K, còn **khi nào nén** do extension local `compaction-policy.ts` lo (40%/75%, floor 60 s, backoff 10 phút sau lần nén lỗi). `@pinet/model-aware-compaction` đã cài nhưng `enabled: false` — rule trùng nhau và nó tự bật lại ngay sau lỗi.
+
+**`pi-footer` và `pi-goal-x` phải vá lại sau mỗi lần cài/update.** Cả hai giữ `ctx` trong hàm chạy về sau (pi-footer: `render()`; pi-goal-x: hai getter của widget goal chạy ở mỗi frame render), mà `/reload` invalidate runner cũ và pi coi mọi truy cập ctx cũ là lỗi fatal → pi thoát ra shell với `Error: This extension ctx is stale after session replacement or reload`. Vá bằng `node scripts/pi-setup-patch-extensions.mjs` (idempotent, backup trước, `--check` để chỉ kiểm tra). Bản vá nằm trong `node_modules` nên **bị ghi đè mỗi lần `pi update`** → chạy lại.
+
+> Cả hai lỗi chưa được sửa upstream (`pi-footer@0.5.1`, `pi-goal-x@0.31.6` là bản mới nhất). `pi-goal-x` còn issue đang mở #77 về dải `peerDependencies` (khác lỗi này).
+
 ### `.pi-setup-exclude`
 
 `scripts/pi-setup-backup.sh --config-dir config` đọc `config/.pi-setup-exclude` (mỗi dòng 1 glob, `#` = comment) và xoá mọi file khớp sau khi mirror. Nhờ vậy chạy backup lại cũng **không** tự thêm `orca-*`/`agentkit-*` trở lại repo:
 
 ```
-loại trừ: 82 file khớp .pi-setup-exclude (extensions/orca-*.ts extensions/agentkit-*)
+loại trừ: 84 file khớp .pi-setup-exclude (extensions/orca-*.ts extensions/agentkit-* advisor-outcomes.jsonl advisor-outcomes-salt extensions/*.bak*)
 ```
 
 **Không có gì thuộc AgentKit trong repo này.** Bộ skill `ak-*` trong `~/.agents/skills` migrate riêng bằng CLI `ak`.
@@ -495,7 +530,7 @@ loại trừ: 82 file khớp .pi-setup-exclude (extensions/orca-*.ts extensions/
 - [ ] **Windows:** đang ở trong **Git Bash** (không PowerShell/cmd)
 - [ ] `git clone https://github.com/mrgoonie/zuey-pi-setup.git`
 - [ ] `./scripts/pi-setup-restore.sh --from-config config --scratch --install --verify` (thử an toàn)
-- [ ] `./scripts/pi-setup-restore.sh --install --verify` → phải ra `22/22 extension khớp`
+- [ ] `./scripts/pi-setup-restore.sh --install --verify` → phải ra `24/24 extension khớp`
 - [ ] **Windows/font:** terminal đã dùng **Nerd Font** (bản Mono) hoặc `iconMode` đã đổi sang `emoji`/`text` — nếu không, icon statusline sẽ vỡ
 - [ ] `/login` cho `opencode-go`, `deepseek`, `openai-codex`
 - [ ] `pi auth check --provider opencode-go` → OK
@@ -504,3 +539,4 @@ loại trừ: 82 file khớp .pi-setup-exclude (extensions/orca-*.ts extensions/
 - [ ] Chạy `/advisor-settings` để cấu hình Executor/Advisor (sau đó backup tự kèm `advisor.json`)
 - [ ] Cài AgentKit nếu cần skill symlink
 - [ ] Rút gọn dòng status LSP: `node scripts/pi-lens-compact-lsp-status.mjs` (chạy lại sau mỗi lần `pi update`)
+- [ ] Vá stale-ctx cho `pi-footer`/`pi-goal-x`: `node scripts/pi-setup-patch-extensions.mjs` (chạy lại sau **mỗi** lần `pi update`)

@@ -2,7 +2,7 @@
 
 # zuey-pi-setup
 
-**A portable snapshot of my [`pi`](https://github.com/earendil-works/pi) setup — clone it and rebuild the full set of 22 extensions on a new machine.**
+**A portable snapshot of my [`pi`](https://github.com/earendil-works/pi) setup — clone it and rebuild the full set of 24 extensions on a new machine.**
 
 pi `0.85.1` · Node `24` · macOS · Linux · Windows (Git Bash) · updated 2026-09-16
 
@@ -120,12 +120,13 @@ zuey-pi-setup/
 │   ├── pi-setup-backup.sh           packages the current machine's setup
 │   ├── pi-setup-restore.sh          rebuilds that setup on a new machine
 │   ├── pi-setup-verify-advisor.mjs  validates advisor.json against pi-advisor-flow's real schema
-│   └── pi-lens-compact-lsp-status.mjs  patches pi-lens so the LSP status line is compact (`LSP ✓` / `LSP ✗`)
+│   ├── pi-lens-compact-lsp-status.mjs  patches pi-lens so the LSP status line is compact (`LSP ✓` / `LSP ✗`)
+│   └── pi-setup-patch-extensions.mjs   patches the stale-ctx crashes in pi-footer + pi-goal-x (both live in node_modules)
 ├── backups/
 │   └── pi-setup-portable.tar.gz     ready-to-download bundle (filtered — see below)
 └── config/                          setup snapshot (plain files, git-diffable)
     ├── .pi-setup-exclude           exclusion globs — backup honours this file
-    ├── settings.json               manifest of 22 packages + model/theme/compaction
+    ├── settings.json               manifest of 24 packages + model/theme/compaction
     ├── advisor.json                pi-advisor-flow config (at the config-dir root)
     ├── 99extensions.json           99percentpeople family config (todo namespace)
     ├── pi-lens-config.json          pi-lens config — lives in ~/.pi-lens/, OUTSIDE the config dir
@@ -135,6 +136,7 @@ zuey-pi-setup/
     ├── model-fallback/
     │   └── config.json            pi-model-fallback rules (state.json is not taken)
     └── extensions/                 locally written extensions, not on npm
+        ├── compaction-policy.ts    the only compaction trigger in this setup (thresholds + failure backoff)
         ├── pi-footer-cache-tps.ts  pushes cache-TTL + token speed (t/s) into pi-footer
         └── pi-footer.json          statusline layout (includes the context bar)
 ```
@@ -154,8 +156,10 @@ zuey-pi-setup/
 `scripts/pi-setup-backup.sh --config-dir config` reads this file (one glob per line, `#` for comments) and deletes every match after mirroring. That is why re-running the backup never drags `orca-*`/`agentkit-*` back into the repo:
 
 ```bash
-./scripts/pi-setup-backup.sh --config-dir config   # → "excluded: 82 files matched .pi-setup-exclude"
+./scripts/pi-setup-backup.sh --config-dir config   # → "excluded: 84 files matched .pi-setup-exclude"
 ```
+
+Besides the two generated families it drops `advisor-outcomes.jsonl`, `advisor-outcomes-salt` (machine-local advisor logs) and `extensions/*.bak*` — the latter keeps the patch scripts' own backups (`*.bak-pi-setup-patch`) out of the repo.
 
 The same file also works for **tarball mode** via `--exclude-file`:
 
@@ -192,6 +196,8 @@ EXTERNAL_CONFIGS=(
 - The manifest uses `~` rather than `/Users/...`, so the artifact never leaks machine paths.
 - Adding another external config means adding one line to `EXTERNAL_CONFIGS`; restore needs no change.
 
+> `pi-multix` keeps credentials outside the config dir too (`~/.multix/.env`) — that one is **deliberately not** in `EXTERNAL_CONFIGS`, because it is a secret. Recreate it on the new machine.
+
 > ⚠️ **Artifact names must not collide with pi-lens' config basenames:** `pi-lens.json`,
 > `pi-lsp.json`, `.pi-lens.json`. pi-lens walks upward from **every** directory it resolves
 > config for and matches the **exact basename**, so an artifact named `config/pi-lens.json`
@@ -202,7 +208,7 @@ EXTERNAL_CONFIGS=(
 
 ### `backups/pi-setup-portable.tar.gz`
 
-A ready-made bundle so you don't have to clone and run the backup yourself: **9 files** — `settings.json` (22 packages), `APPEND_SYSTEM.md`, `models-store.json`, `advisor.json`, `pi-lens-config.json`, `external-configs.txt`, `extensions/pi-footer.json`, `extensions/pi-footer-cache-tps.ts`, and `model-fallback/config.json`.
+A ready-made bundle so you don't have to clone and run the backup yourself: **10 files** — `settings.json` (24 packages), `APPEND_SYSTEM.md`, `models-store.json`, `advisor.json`, `pi-lens-config.json`, `external-configs.txt`, `model-fallback/config.json`, `extensions/compaction-policy.ts`, `extensions/pi-footer.json`, and `extensions/pi-footer-cache-tps.ts`.
 
 It is the script's full default bundle, **filtered** through `.pi-setup-exclude` so machine-only material never reaches this public repo:
 
@@ -211,11 +217,11 @@ It is the script's full default bundle, **filtered** through `.pi-setup-exclude`
 | `extensions/orca-*.ts` (3 files, 1,239 lines) | Orca-generated code — deliberately kept out of the public repo |
 | `extensions/agentkit-*` (95 files) | Contains `native-skill-paths.json` + `native-skill-hashes.json` (**absolute paths**, a list of 107 skills) and `hooks/.logs/hook-log.jsonl` (activity log) |
 
-Restoring this bundle yields the same file set as `config/` — all 22 extensions plus the statusline. It is a snapshot of this machine, so its `settings.json` can differ from `config/settings.json` in keys changed afterwards (e.g. default model, TUI mode). For an unfiltered bundle (keeping machine state) drop `--exclude-file`.
+Restoring this bundle yields the same file set as `config/` — all 24 extensions plus the statusline. It is a snapshot of this machine, so its `settings.json` can differ from `config/settings.json` in keys changed afterwards (e.g. default model, TUI mode). For an unfiltered bundle (keeping machine state) drop `--exclude-file`.
 
 ---
 
-## The 22 extensions in this snapshot
+## The 24 extensions in this snapshot
 
 | # | Package | Version | What it does |
 |---|---|---|---|
@@ -241,6 +247,8 @@ Restoring this bundle yields the same file set as `config/` — all 22 extension
 | 20 | `pi-lens` | 4.1.6 | LSP diagnostics + navigation, linters/type-checkers, formatter, ast-grep/tree-sitter, `symbol_search`, read-guard, `/lens-map`. In this setup the widget, autoformat and autofix are disabled (see its section) |
 | 21 | `pi-browser-use` | 0.11.7 | agent browser via `chrome-devtools-mcp` (not Playwright): Pi's own headless Chrome on a dedicated `~/.pi/browser-profile` (log in once with `browser_setup`), isolated `fresh` mode, `browser_*` tools plus the bundled `browser-policy` skill. Needs Node ≥ 24 and Chrome stable. Run `browser_doctor` for self-diagnostics |
 | 22 | `@injaneity/pi-computer-use` | 0.5.1 | lets an agent drive desktop apps on macOS, Windows and Linux through the platform accessibility APIs: `find_roots`, `observe_ui`, `search_ui`, `expand_ui`, `inspect_ui`, `act_ui`, `read_text`, `wait_for`. Ships a per-user helper at `~/Applications/pi-computer-use.app`; macOS needs **Accessibility** + **Screen Recording** granted to it, and the one-time setup flow requires an interactive Pi session, so nothing works in `-p` print mode until you grant them |
+| 23 | `@pinet/model-aware-compaction` | 0.2.21 | model-aware compaction trigger: compacts on a share of the **active model's** window instead of a fixed token count. Installed but **disabled** here — `config/extensions/compaction-policy.ts` already implements the same thresholds and does not re-arm after a failed summary (see the compaction section) |
+| 24 | `pi-multix` | 0.1.5 | multimodal generation and media processing through the multix CLI: images, video, speech, music, 3D, document conversion, ffmpeg/ImageMagick optimization. Its credentials live in `~/.multix/.env`, deliberately **outside** this repo |
 
 > Versions are **for reference at snapshot time**; the source of truth is `config/settings.json`. Only `pi-smart-fetch` is hard-pinned, the rest float → a new machine pulls the latest. Pin them in `config/settings.json` if you need an exact match.
 
@@ -451,9 +459,21 @@ Its config lives **outside** pi's config dir, which is why `scripts/pi-setup-bac
 
 ---
 
+## Compaction: when to compact vs how long the summary may be
+
+These are two independent knobs, and treating them as one is how a session dies with `Compaction failed: Summarization failed: generation hit the token cap and the summary is incomplete`:
+
+- **When to compact** is the local extension `config/extensions/compaction-policy.ts`: at **40%** of the window for models with a ≥500K window, **75%** below that, with 60 s between requests and a **10-minute backoff** after a failed compaction — so one failure does not re-arm a ~530K-token summarization on the very next turn.
+- **How long the summary may be** is pi core: `min(floor(0.8 × compaction.reserveTokens), model.maxTokens)` for the summary pass (`0.5×` for the turn-prefix pass). The default `reserveTokens: 16384` caps the summary at **13,107 tokens**.
+- That cap is what breaks long sessions: pi's UPDATE summarization grows monotonically. Measured growth on one real session: **6,012 → 11,286 → 10,283 → 12,659** tokens, i.e. it crosses the default cap.
+- This setup ships `compaction.modelOverrides` with `reserveTokens: 60000` (→ a 48,000-token summary cap) for the five ≥500K-window models in `enabledModels`: `opencode-go/deepseek-v4.1-flash`, `opencode-go/kimi-k3`, `opencode-go/qwen3.8-max`, `opencode-go/glm-5.3`, `deepseek/deepseek-flash`. The global `reserveTokens` stays **16384**, because it is also the native trigger reserve and must stay small for small windows.
+- `@pinet/model-aware-compaction` is installed but **disabled** (`enabled: false` under `extensions` in `config/settings.json`): its rules duplicate the two thresholds above, and on failure it re-arms immediately (`onError` clears `triggeredModelKey`), i.e. it would retry the expensive summarization every turn.
+
+---
+
 ## Scripts
 
-The two setup scripts **never ask for confirmation** — they are safe to run from scripts/CI. Risk is handled with snapshots plus warnings on `stderr`. The third script only **reads**; the fourth edits one file inside the installed pi-lens bundle.
+The two setup scripts **never ask for confirmation** — they are safe to run from scripts/CI. Risk is handled with snapshots plus warnings on `stderr`. Of the three remaining scripts, one only **reads** (`pi-setup-verify-advisor.mjs`); the other two patch files inside installed third-party packages (`pi-lens`, `pi-footer`, `pi-goal-x`) and each stops with exit `2` instead of guessing when the code changes shape.
 
 ### `pi-setup-verify-advisor.mjs`
 
@@ -494,6 +514,33 @@ node scripts/pi-lens-compact-lsp-status.mjs --revert  # restore the original bun
 | `2` | environment problem (pi-lens bundle not found, bad arguments) |
 
 > ⚠ npm overwrites `pi-lens/dist/index.js` on every `pi update` or pi-lens reinstall → **re-run this script**. That is why a patch script lives in this snapshot repo. An upstream request for a first-class option is filed.
+
+### `pi-setup-patch-extensions.mjs`
+
+Two third-party packages keep an `ExtensionContext` inside a function that runs **later**: `pi-footer`'s `render()` (→ `collectStatuslineData` → `ctx.getContextUsage()`) and `pi-goal-x`'s goal widget, whose two getters (`getSettings` → `loadGoalSettings(ctx.cwd)`, `getLedgerEvents` → `goalActivityEvents(ctx, …)`) run on **every** render frame. `/reload` invalidates the old runner, and pi treats any use of an invalidated ctx as fatal, so the process dies with:
+
+```
+Error: This extension ctx is stale after session replacement or reload.
+  at ExtensionRunner.assertActive
+```
+
+| Patch | Fix |
+|---|---|
+| `pi-footer` | wraps that one ctx use inside `render()` in a try/catch and returns `[]` for that frame; the footer is re-applied with a fresh ctx on the next `session_start` |
+| `pi-goal-x` | captures `cwd` (a plain string — all `GoalLedgerContext` needs) when the widget is registered, so both getters read that value and the render path never touches ctx |
+
+```bash
+node scripts/pi-setup-patch-extensions.mjs           # patch both (idempotent, backs up first)
+node scripts/pi-setup-patch-extensions.mjs --check   # report only: 0 = all patched, 1 = something missing
+```
+
+| Exit | Meaning |
+|---|---|
+| `0` | everything patched (or just patched) |
+| `1` | something unpatched under `--check`, or a write produced no guard → the original is restored from the backup |
+| `2` | environment problem: package not found, or the code changed shape so an anchor no longer matches (it does **not** guess) |
+
+> ⚠ Both patches live in `node_modules` → **re-run after every `pi update`** or package reinstall (and once after a restore). As of this snapshot neither bug is fixed upstream: `pi-footer@0.5.1` and `pi-goal-x@0.31.6` are the latest releases. `pi-goal-x` also has an unrelated open issue ([#77](https://github.com/tmonk/pi-goal-x/issues/77)) about its `peerDependencies` range.
 
 ### `pi-setup-backup.sh`
 
@@ -546,7 +593,7 @@ Before overwriting, `settings.json` **and** `auth.json` (when present in the sou
 
 Tested by restoring into a **brand-new** config dir via `PI_CODING_AGENT_DIR`, never touching the real setup.
 
-> ⚠️ Every number below was measured on the **20-package** payload. The current snapshot has **22 packages** (added `pi-browser-use` and `@injaneity/pi-computer-use`) and has **not been re-measured**.
+> ⚠️ The tables below are historical, one row per snapshot. The current **24-package** snapshot was re-measured on Windows 11 + Git Bash (2026-09-21): install **123 s**, module dirs `0 → 281`, `--verify` **24/24**, `pi list` **24** — details in the Windows table below.
 
 | Check | Result |
 |---|---|
@@ -566,16 +613,18 @@ Tested by restoring into a **brand-new** config dir via `PI_CODING_AGENT_DIR`, n
 | `--hooks` + `.pi-setup-exclude` | ✅ hooks survive, "override" warning printed, 54 files remain |
 | `--auth` on restore | ✅ `auth.json.bak.<ts>` preserves the old credentials before overwriting |
 
-### Windows 11 + Git Bash (MSYS2, bash 5.3) — measured on the 20-package payload
+### Windows 11 + Git Bash (MSYS2, bash 5.3) — re-measured on the 24-package payload (2026-09-21)
 
 | Check | Result |
 |---|---|
-| Real restore (`--from-config config --install --verify`) | ✅ **20/20**, install **88 s**, module dirs `0 → 203` |
-| `pi list` in the restored dir | ✅ 20 packages |
+| Real restore (`--from-config config --scratch --install --verify`) | ✅ **24/24**, install **123 s**, module dirs `0 → 281` (the 20-package payload was `20/20` · 88 s · `0 → 203`) |
+| `pi list` in the restored dir | ✅ 24 packages |
+| `settings.json` after restore | ✅ **byte-identical** to `config/settings.json` |
+| Extensions actually **running** in the restored dir | ✅ 26 `extension_ui_request`, **0 load errors**; the single error notification is `Advisor models are not configured or available` — expected in a fresh dir where `/advisor` has not run yet |
 | Config **outside** the config dir | ✅ written to `%USERPROFILE%\.pi-lens\config.json`, matching `config/pi-lens-config.json` |
-| Restore from a bundle into a fake `HOME` | ✅ 9 files, external config written correctly |
+| Restore from a bundle into a fake `HOME` | ✅ 10 files, external config written correctly |
 | MSYS path conversion for child `pi` | ✅ `PI_CODING_AGENT_DIR=/tmp/...` → `C:/Users/.../Temp/...` |
-| Bundle rebuilt on Windows | ✅ 9 files, 7.9 KB, clean (no `._*` AppleDouble junk like the macOS-built one) |
+| Bundle rebuilt on Windows | ✅ 10 files, 11.2 KB, clean (no `._*` AppleDouble junk like the macOS-built one), sha256 `280de9d0…` |
 | Package counting without `python3` | ✅ `node -e` → `20` |
 | CRLF in scripts | ✅ bash 5.3.15 tolerates CRLF (tested with a CRLF copy, exit 0) |
 
@@ -600,6 +649,7 @@ Tested by restoring into a **brand-new** config dir via `PI_CODING_AGENT_DIR`, n
 - **The scripts need a POSIX shell** → on Windows run them in **Git Bash** or **WSL**; PowerShell/cmd cannot run them.
 - **Statusline icons need a Nerd Font** → using the unpatched JetBrains Mono from `fonts/` breaks icons into ◆/✦/`?`; see [Terminal font](#terminal-font-nerd-font-required).
 - **`pi` installs globally per Node version** → `nvm use` / `fnm use` to a different version can make the `pi` command disappear; reinstall it globally for that version.
+- **`/reload` kills pi unless `pi-footer` and `pi-goal-x` are patched** (`Error: This extension ctx is stale after session replacement or reload`) → run `node scripts/pi-setup-patch-extensions.mjs`, and **re-run after every `pi update`** because both patches live in `node_modules`. Neither bug is fixed upstream (`pi-footer@0.5.1`, `pi-goal-x@0.31.6` are the latest).
 - **The `pi-lens` LSP status line is a bundle patch**, not config → `pi update` overwrites it; re-run `node scripts/pi-lens-compact-lsp-status.mjs` (the script stops with exit `1` if pi-lens changes the shape of that function instead of guessing).
 
 ---

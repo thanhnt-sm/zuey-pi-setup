@@ -1,11 +1,11 @@
 {
-  "lastChangelogVersion": "0.85.1",
+  "lastChangelogVersion": "0.86.0",
   "theme": "light/dark",
-  "defaultProvider": "deepseek",
-  "defaultModel": "deepseek-v4-flash",
+  "defaultProvider": "opencode-go",
+  "defaultModel": "deepseek-v4.1-flash",
   "defaultThinkingLevel": "high",
   "defaultProjectTrust": "always",
-  "tuiMode": "regular",
+  "tuiMode": "fullscreen",
   "packages": [
     "npm:pi-web-access",
     "npm:pi-mcp-adapter",
@@ -24,23 +24,27 @@
     "npm:pi-footer",
     "npm:pi-smart-fetch@0.3.17",
     "npm:@juicesharp/rpiv-btw",
-    "npm:pi-model-fallback",
     "npm:pi-advisor-flow",
     "npm:@tmustier/pi-session-recap",
     "npm:pi-lens",
     "npm:@99percentpeople/pi-todo",
     "npm:@pi-unipi/notify",
+    "npm:@pinet/model-aware-compaction",
+    "npm:pi-multix",
+    "npm:pi-model-fallback",
     "npm:pi-browser-use",
     "npm:@injaneity/pi-computer-use"
   ],
   "enabledModels": [
-    "deepseek/deepseek-v4-flash",
     "opencode-go/deepseek-v4.1-flash",
-    "opencode-go/kimi-k2.7-code",
-    "opencode-go/minimax-m3",
+    "opencode-go/kimi-k3",
+    "opencode-go/qwen3.8-max",
     "opencode-go/glm-5.3",
+    "deepseek/deepseek-flash",
+    "openai-codex/gpt-5.6-luna",
     "openai-codex/gpt-5.6-sol",
-    "deepseek/deepseek-v4-pro"
+    "openai-codex/gpt-6-astra",
+    "openai-codex/gpt-5.6-terra"
   ],
   "showCacheMissNotices": true,
   "thinkingBudgets": {
@@ -50,7 +54,73 @@
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
-    "keepRecentTokens": 20000
+    "keepRecentTokens": 20000,
+    "modelOverrides": {
+      "opencode-go/deepseek-v4.1-flash": {
+        "reserveTokens": 60000
+      },
+      "opencode-go/kimi-k3": {
+        "reserveTokens": 60000
+      },
+      "opencode-go/qwen3.8-max": {
+        "reserveTokens": 60000
+      },
+      "opencode-go/glm-5.3": {
+        "reserveTokens": 60000
+      },
+      "deepseek/deepseek-flash": {
+        "reserveTokens": 60000
+      }
+    }
+  },
+  "model-aware-compaction": {
+    "enabled": false,
+    "rules": [
+      {
+        "model": "opencode-go/deepseek-v4.1-flash",
+        "activeContextTokens": 400000
+      },
+      {
+        "model": "opencode-go/kimi-k3",
+        "activeContextTokens": 419430
+      },
+      {
+        "model": "opencode-go/qwen3.8-max",
+        "activeContextTokens": 400000
+      },
+      {
+        "model": "opencode-go/glm-5.3",
+        "activeContextTokens": 400000
+      },
+      {
+        "model": "deepseek/deepseek-flash",
+        "activeContextTokens": 400000
+      },
+      {
+        "model": "openai-codex/gpt-5.6-luna",
+        "activeContextTokens": 204000
+      },
+      {
+        "model": "openai-codex/gpt-5.6-sol",
+        "activeContextTokens": 204000
+      },
+      {
+        "model": "openai-codex/gpt-5.6-terra",
+        "activeContextTokens": 204000
+      },
+      {
+        "model": "openai-codex/gpt-6-astra",
+        "activeContextTokens": 204000
+      },
+      {
+        "model": "openai-codex/*",
+        "activeContextTokens": 204000
+      },
+      {
+        "model": "*",
+        "activeContextTokens": 400000
+      }
+    ]
   },
   "retry": {
     "enabled": true,
@@ -58,5 +128,14 @@
   },
   "markdown": {
     "mermaid": "streaming"
-  }
+  },
+  "images": {
+    "blockImages": true
+  },
+  "terminal": {
+    "showTerminalProgress": true
+  },
+  "steeringMode": "one-at-a-time",
+  "fullscreenExitOutput": "resume-hint",
+  "fullscreenScrollbar": "auto"
 }

@@ -15,3 +15,7 @@ extensions/agentkit-*
 # State của pi-advisor-flow (salt + log outcome) — không phải setup, không public
 advisor-outcomes.jsonl
 advisor-outcomes-salt
+
+# File backup tay nằm lẫn trong extensions/ (sinh ra khi sửa extension trực tiếp
+# trên máy). Không phải setup, mirror bỏ qua nhờ dòng này.
+extensions/*.bak*
