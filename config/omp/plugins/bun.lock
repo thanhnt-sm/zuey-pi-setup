@@ -1,0 +1,15 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "omp-plugins",
+      "dependencies": {
+        "pi-commandcode-provider": "^0.6.0",
+      },
+    },
+  },
+  "packages": {
+    "pi-commandcode-provider": ["pi-commandcode-provider@0.6.0", "", { "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*" }, "optionalPeers": ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"] }, "sha512-bhG65hdZDDlr8QSOMpt/a+DBYbeIkLWAEmBQnyREuBMu/H2ibgbfNy5iLaRqBF2wfv8yBpxQb/TJ6ZF2QkhO+w=="],
+  }
+}

@@ -1,0 +1,99 @@
+shellPath: {{SHELL_PATH}}
+modelRoles:
+  judge: typesafe/jev-latest
+  advisor: openai-codex/gpt-5.6-terra:medium
+  plan: google-antigravity/claude-opus-4-6:medium
+  smol: google-antigravity/gemini-3.8-flash:high
+  slow: google-antigravity/gemini-3.1-pro:high
+  vision: google-antigravity/gemini-3.8-flash:high
+  commit: google-antigravity/gemini-3.8-flash:medium
+  task: google-antigravity/gemini-3.8-flash:high
+  tiny: google-antigravity/gemini-3.8-flash:medium
+  memory: google-antigravity/gemini-3.8-flash:high
+  web: google-antigravity/gemini-3.8-flash:high
+  default: google-antigravity/gemini-3.8-flash:high
+symbolPreset: unicode
+composer:
+  shape: box
+theme:
+  dark: titanium
+setupVersion: 2
+defaultThinkingLevel: auto
+secrets:
+  enabled: true
+dev:
+  autoqa: false
+startup:
+  checkUpdate: true
+hideThinkingBlock: true
+plan:
+  defaultOnStartup: true
+retry:
+  fallbackChains:
+    google-antigravity/*:
+      - google-antigravity/gemini-3.1-pro
+      - google-antigravity/gemini-3.8-flash
+    default:
+      - google-antigravity/gemini-3.1-pro
+    judge:
+      - "@tiny"
+      - "@smol"
+      - "@default"
+    openai-codex/*:
+      - google-antigravity/gemini-3.1-pro
+advisor:
+  enabled: true
+  syncBacklog: "1"
+prewalk:
+  enabled: true
+loop:
+  mode: compact
+autolearn:
+  enabled: true
+  autoContinue: true
+memory:
+  backend: mnemopi
+readLineNumbers: true
+read:
+  renderMarkdown: true
+  toolResultPreview: true
+  summarize:
+    prose: true
+task:
+  enableLsp: true
+  enableEffort: true
+  prewalk: true
+  agentPrewalk:
+    reviewer: "on"
+    scout: "on"
+    security-reviewer: "on"
+    sonic: "on"
+  agentAdvisor:
+    reviewer: "on"
+    scout: "on"
+    security-reviewer: "on"
+    sonic: "on"
+    task: "on"
+cycleOrder:
+  - smol
+  - slow
+  - default
+eval:
+  workpool:
+    freshAgents: true
+  autoBackground:
+    enabled: true
+contextPromotion:
+  enabled: true
+branchSummary:
+  enabled: true
+edit:
+  autoRepair:
+    enabled: true
+skills:
+  enableClaudeUser: true
+  customDirectories:
+    []
+providers:
+  openai-codex:
+    codeMode: "on"

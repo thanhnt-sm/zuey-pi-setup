@@ -1,0 +1,19 @@
+providers:
+  typesafe:
+    baseUrl: https://api.typesafe.ai
+    apiKey: !printenv TYPESAFE_API_KEY
+  zai-paas:
+    baseUrl: https://api.z.ai/api/paas/v4
+    apiKey: !printenv ZAI_API_KEY
+    api: openai-completions
+    models:
+      - id: glm-5.3-flash
+        name: GLM-5.3-Flash
+        contextWindow: 1000000
+        maxTokens: 128000
+  codex-3rd:
+    baseUrl: https://api.aixingialaire.shop/v1
+    apiKey: !printenv API_KEY_PLACEHOLDER
+    api: openai-completions
+    discovery:
+      type: "openai-models-list"

@@ -10,3 +10,17 @@ pi-setup-install.log
 
 # Bản screenshot gốc (chưa crop/nén) — không track
 screenshots/originals/
+
+# Bảo mật & Môi trường (không bao giờ track .env thật, chỉ track .env.example)
+**/.env
+!**/.env.example
+*.env.local
+
+# Caching, DB & Artifacts tạm
+*.db
+*.db-shm
+*.db-wal
+*.bak*
+node_modules/
+/omp-setup-portable.tar.gz
+/omp-setup-portable.tar.gz.tmp.*

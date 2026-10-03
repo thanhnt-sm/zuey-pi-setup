@@ -1,0 +1,7 @@
+# .omp-syncignore
+# Declarative blocklist for upstream pi plugins that conflict with Oh-My-Pi (omp).
+# OMP natively handles these features (advisors, model fallbacks, LSP statusline).
+
+pi-advisor-flow
+pi-model-fallback
+pi-lens
