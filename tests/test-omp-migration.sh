@@ -238,7 +238,11 @@ echo "✓ PASS: Tarball contains only clean, portable setup plus upstream overla
 GUARD_OMP="$TEST_TMP/guard_omp"
 cp -r "$MOCK_OMP" "$GUARD_OMP"
 echo 'sqlite' > "$GUARD_OMP/agent/managed-skills/sample-skill/cache.db"
-if run_backup --source "$GUARD_OMP" -o "$TEST_TMP/guard-db.tar.gz" --no-upstream >/dev/null 2>&1; then
+set +e
+run_backup --source "$GUARD_OMP" -o "$TEST_TMP/guard-db.tar.gz" --no-upstream >/dev/null 2>&1
+rc=$?
+set -e
+if [ "$rc" -ne 2 ]; then
     echo "FAIL: backup accepted a .db file into the tracked tarball."
     exit 1
 fi
@@ -246,13 +250,21 @@ rm -f "$GUARD_OMP/agent/managed-skills/sample-skill/cache.db"
 # Assembled at runtime so the repo never contains a key-shaped literal
 FAKE_GOOGLE_KEY="AIza$(printf 'x%.0s' $(seq 1 35))"
 echo "const key = \"$FAKE_GOOGLE_KEY\";" > "$GUARD_OMP/agent/extensions/leak.ts"
-if run_backup --source "$GUARD_OMP" -o "$TEST_TMP/guard-key.tar.gz" --no-upstream >/dev/null 2>&1; then
+set +e
+run_backup --source "$GUARD_OMP" -o "$TEST_TMP/guard-key.tar.gz" --no-upstream >/dev/null 2>&1
+rc=$?
+set -e
+if [ "$rc" -ne 2 ]; then
     echo "FAIL: backup accepted a Google API key."
     exit 1
 fi
 printf 'providers:\n  x:\n    token: abcdefghijklmnopqrstuvwxyz123456\n' > "$GUARD_OMP/agent/managed-skills/sample-skill/creds.yml"
 rm -f "$GUARD_OMP/agent/extensions/leak.ts"
-if run_backup --source "$GUARD_OMP" -o "$TEST_TMP/guard-yaml.tar.gz" --no-upstream >/dev/null 2>&1; then
+set +e
+run_backup --source "$GUARD_OMP" -o "$TEST_TMP/guard-yaml.tar.gz" --no-upstream >/dev/null 2>&1
+rc=$?
+set -e
+if [ "$rc" -ne 2 ]; then
     echo "FAIL: backup accepted an unquoted YAML token."
     exit 1
 fi
@@ -262,14 +274,22 @@ echo "✓ PASS: backup refuses SQLite files, AIza keys and unquoted YAML tokens.
 GUARD2_OMP="$TEST_TMP/guard2_omp"
 cp -r "$MOCK_OMP" "$GUARD2_OMP"
 echo "export { default } from \"$TEST_TMP/does-not-exist/x.ts\";" > "$GUARD2_OMP/agent/extensions/dangling.ts"
-if run_backup --source "$GUARD2_OMP" -o "$TEST_TMP/guard-shim.tar.gz" --no-upstream >/dev/null 2>&1; then
+set +e
+run_backup --source "$GUARD2_OMP" -o "$TEST_TMP/guard-shim.tar.gz" --no-upstream >/dev/null 2>&1
+rc=$?
+set -e
+if [ "$rc" -ne 2 ]; then
     echo "FAIL: backup accepted a shim pointing at a missing absolute path."
     exit 1
 fi
 # Non-shim code importing an absolute machine path must abort too
 rm -f "$GUARD2_OMP/agent/extensions/dangling.ts"
 printf 'import x from "%s/ext_src/shimmed.ts";\nexport default { x, more: true };\n' "$TEST_TMP" > "$GUARD2_OMP/agent/extensions/mixed.ts"
-if run_backup --source "$GUARD2_OMP" -o "$TEST_TMP/guard-mixed.tar.gz" --no-upstream >/dev/null 2>&1; then
+set +e
+run_backup --source "$GUARD2_OMP" -o "$TEST_TMP/guard-mixed.tar.gz" --no-upstream >/dev/null 2>&1
+rc=$?
+set -e
+if [ "$rc" -ne 2 ]; then
     echo "FAIL: backup accepted an extension importing an absolute machine path."
     exit 1
 fi

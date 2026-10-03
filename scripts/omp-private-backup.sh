@@ -24,6 +24,7 @@
 #
 # Restore (omp stopped):
 #   gpg -d <archive> | tar -xzf - -C ~
+#   find ~/.omp/agent -name "*.db-wal" -o -name "*.db-shm" -delete
 #
 set -euo pipefail
 
@@ -187,4 +188,6 @@ else
 fi
 
 echo "✓ omp-private-backup: $OUT"
-echo "  Restore (omp stopped): gpg -d \"$OUT\" | tar -xzf - -C ~"
+echo "  Restore (omp stopped):"
+echo "    gpg -d \"$OUT\" | tar -xzf - -C ~"
+echo "    find ~/.omp/agent -name \"*.db-wal\" -o -name \"*.db-shm\" -delete"

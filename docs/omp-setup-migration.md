@@ -166,6 +166,7 @@ OAuth nằm trong `~/.omp/agent/agent.db` (bảng `auth_credentials`) và không
 Tắt omp trước, rồi:
 ```bash
 gpg -d omp-private-<ts>.tar.gz.gpg | tar -xzf - -C ~
+find ~/.omp/agent -name "*.db-wal" -o -name "*.db-shm" -delete
 ```
 Đường dẫn trong archive tương đối với `$HOME` (`.omp/agent/memories/...`, `.omp/agent/history.db`, `.claude/mcp/typesafe/...`).
 

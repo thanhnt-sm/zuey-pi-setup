@@ -202,10 +202,13 @@ if [ -d "$OMP_SRC/agent/extensions" ]; then
 	find "$STAGE_DIR/agent/extensions" \( -name '*.bak*' -o -name '*.disabled' -o -name '*.off' -o -name 'orca-*' \) -prune -exec rm -rf {} +
 	for shim in "$STAGE_DIR/agent/extensions"/*.ts "$STAGE_DIR/agent/extensions"/*.js; do
 		[ -f "$shim" ] || continue
-		# Pure shim = every non-blank, non-comment line is an absolute-path import/export
-		if grep -qE "$ABS_IMPORT_RE" "$shim" \
-			&& ! grep -vE "^[[:space:]]*(//.*)?$" "$shim" | grep -qvE "$ABS_IMPORT_RE"; then
-			deref_extension_shim "$shim"
+		# Pure shim = every non-blank, non-comment line is an absolute-path import/export.
+		# Count non-matching lines to avoid SIGPIPE under set -euo pipefail.
+		if grep -qE "$ABS_IMPORT_RE" "$shim"; then
+			n="$(grep -vE "^[[:space:]]*(//.*)?$" "$shim" | grep -cvE "$ABS_IMPORT_RE" || true)"
+			if [ "$n" -eq 0 ]; then
+				deref_extension_shim "$shim"
+			fi
 		fi
 	done
 	ABS_LEFT="$(grep -rlE "$ABS_IMPORT_RE" "$STAGE_DIR/agent/extensions" 2>/dev/null || true)"
