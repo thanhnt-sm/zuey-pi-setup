@@ -2,6 +2,8 @@
 
 Tài liệu hướng dẫn quy trình đóng gói toàn bộ cấu hình **Oh-My-Pi (omp)** kết hợp cùng setup giao diện/tiện ích từ **zuey-pi**, khử toàn bộ secret/token nhạy cảm, đưa lên Git fork để có thể khôi phục 100% trên **macOS M1 (Apple Silicon)** hoặc bất kỳ máy nào khi cần dựng lại.
 
+> 📘 **Cẩm nang nâng cao**: Để tra cứu quy trình vận hành định kỳ và xử lý toàn bộ các sự cố ngoại lệ (GPG freeze, Bun cache/lockfile, SQLite WAL lock, headless restore, shell path...), xem ngay **[`docs/omp-operations-guide.md`](./omp-operations-guide.md)**.
+
 ---
 
 ## 1. Cấu trúc sau khi hợp nhất trong Workspace
