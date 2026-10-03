@@ -13,7 +13,7 @@ providers:
         maxTokens: 128000
   codex-3rd:
     baseUrl: https://api.aixingialaire.shop/v1
-    apiKey: !printenv API_KEY_PLACEHOLDER
+    apiKey: !printenv CODEX_3RD_API_KEY
     api: openai-completions
     discovery:
       type: "openai-models-list"

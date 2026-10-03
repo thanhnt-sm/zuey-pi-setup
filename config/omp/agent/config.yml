@@ -1,17 +1,17 @@
 shellPath: {{SHELL_PATH}}
 modelRoles:
   judge: typesafe/jev-latest
-  advisor: openai-codex/gpt-5.6-terra:medium
-  plan: google-antigravity/claude-opus-4-6:medium
+  advisor: google-antigravity/claude-opus-5-5-high:medium
+  plan: google-antigravity/claude-opus-5-5-high:medium
   smol: google-antigravity/gemini-3.8-flash:high
-  slow: google-antigravity/gemini-3.1-pro:high
+  slow: google-antigravity/claude-opus-5-5-high:medium
   vision: google-antigravity/gemini-3.8-flash:high
   commit: google-antigravity/gemini-3.8-flash:medium
   task: google-antigravity/gemini-3.8-flash:high
   tiny: google-antigravity/gemini-3.8-flash:medium
   memory: google-antigravity/gemini-3.8-flash:high
   web: google-antigravity/gemini-3.8-flash:high
-  default: google-antigravity/gemini-3.8-flash:high
+  default: google-antigravity/claude-sonnet-5-5-medium:medium
 symbolPreset: unicode
 composer:
   shape: box

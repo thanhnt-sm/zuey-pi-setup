@@ -2,11 +2,6 @@
   "name": "omp-plugins",
   "private": true,
   "dependencies": {
-    "pi-commandcode-provider": "^0.6.0",
-    "pi-footer": "^0.5.1",
-    "pi-smart-fetch": "0.3.17",
-    "@tmustier/pi-session-recap": "^0.2.0",
-    "pi-worktree": "^0.1.0",
-    "@injaneity/pi-computer-use": "^0.1.0"
+    "pi-commandcode-provider": "^0.6.0"
   }
 }
