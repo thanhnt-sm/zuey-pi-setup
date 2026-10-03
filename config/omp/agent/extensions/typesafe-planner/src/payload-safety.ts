@@ -188,10 +188,17 @@ export function truncatePayloadState(state: string, maxBytes: number): string {
 
   // Safety fallback if assembled still exceeds maxBytes
   if (Buffer.byteLength(assembled, "utf8") > maxBytes) {
-    const buf = Buffer.from(assembled, "utf8");
-    assembled = buf.subarray(0, maxBytes).toString("utf8");
+    // Structural trimming: slice by characters to avoid broken UTF-8,
+    // and ensure we don't return something that looks like broken JSON.
+    let charBudget = maxBytes;
+    while (Buffer.byteLength(assembled.substring(0, charBudget), "utf8") > maxBytes) {
+      charBudget--;
+    }
+    assembled = assembled.substring(0, charBudget);
+    if (assembled.startsWith("{") || assembled.startsWith("[")) {
+       assembled = "--- Truncated Payload ---\n" + assembled;
+    }
   }
-
   return assembled;
 }
 
@@ -275,7 +282,17 @@ export function preparePayloadSafe<T extends TypeSafePayload>(
       maxBytes - Buffer.byteLength(JSON.stringify({ ...scrubbed, state: "" }), "utf8") - 32
     );
     const currState = typeof scrubbed.state === "string" ? scrubbed.state : JSON.stringify(scrubbed.state);
-    const forcedTrunc = Buffer.from(currState, "utf8").subarray(0, budget).toString("utf8");
+    
+    // Structural JSON trimming: avoid severing byte streams and prevent 422 from broken JSON parsers
+    let charBudget = budget;
+    while (Buffer.byteLength(currState.substring(0, charBudget), "utf8") > budget) {
+      charBudget--;
+    }
+    let forcedTrunc = currState.substring(0, charBudget);
+    if (typeof scrubbed.state !== "string" || forcedTrunc.startsWith("{") || forcedTrunc.startsWith("[")) {
+      forcedTrunc = "--- Truncated State ---\n" + forcedTrunc;
+    }
+    
     scrubbed = {
       ...scrubbed,
       state: forcedTrunc,

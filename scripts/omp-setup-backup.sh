@@ -226,11 +226,11 @@ if [ -d "$OMP_SRC/agent/managed-skills" ]; then
 	cp -r "$OMP_SRC/agent/managed-skills/." "$STAGE_DIR/agent/managed-skills/"
 fi
 
-# 7. Copy plugins manifest (package.json, lockfile)
+# 7. Copy plugins manifest (package.json only; lockfiles are generated fresh on target OS)
 if [ -d "$OMP_SRC/plugins" ]; then
-	echo "-> Copying plugins manifests (excluding node_modules)..."
+	echo "-> Copying plugins manifests (excluding node_modules and lockfiles)..."
 	mkdir -p "$STAGE_DIR/plugins"
-	for f in package.json omp-plugins.lock.json bun.lock; do
+	for f in package.json; do
 		if [ -f "$OMP_SRC/plugins/$f" ]; then
 			cp "$OMP_SRC/plugins/$f" "$STAGE_DIR/plugins/"
 		fi

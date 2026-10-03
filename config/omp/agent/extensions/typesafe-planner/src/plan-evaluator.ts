@@ -76,31 +76,40 @@ export function constructPlanQuestions(): Record<string, PlanQuestion> {
     scope_mode: {
       type: "choice",
       instructions: "Does this implementation plan preserve, expand, or reduce the requested scope?",
-      criteria: [
-        "HOLD: Faithfully implements all requested features and constraints without omitting requirements.",
-        "EXPANSION: Covers all requested features and adds helpful, justifiable enhancements.",
-        "REDUCTION: Omits requested features, cuts corners, or drops required constraints.",
-      ],
+      criteria: {
+        HOLD: "Faithfully implements all requested features and constraints without omitting requirements.",
+        EXPANSION: "Covers all requested features and adds helpful, justifiable enhancements.",
+        REDUCTION: "Omits requested features, cuts corners, or drops required constraints.",
+        other: "Unrecognized scope alteration",
+      },
     },
     algorithm_depth: {
       type: "score",
       instructions: "Evaluate the algorithmic rigor, edge-case coverage, and boundary handling in this plan.",
       criteria: [
-        "Level 0: Superficial, happy-path only, no error handling or edge cases.",
-        "Level 1: Basic validation, missing timeout, concurrency, or failure modes.",
-        "Level 2: Comprehensive error handling, boundary validation, and cleanup.",
-        "Level 3: Production invariants, rollback strategies, and strict typing.",
+        "Superficial, happy-path only, no error handling or edge cases.",
+        "Basic validation, missing timeout, concurrency, or failure modes.",
+        "Comprehensive error handling, boundary validation, and cleanup.",
+        "Production invariants, rollback strategies, and strict typing.",
       ],
     },
     task_actionability: {
       type: "noul",
       instructions:
         "Rate the probability that every atomic task in this plan specifies concrete, verifiable commands and deterministic pass/fail criteria.",
+      criteria: {
+        true: "Tasks are concrete, verifiable, and deterministic",
+        false: "Tasks are vague, lack commands, or are missing criteria",
+      },
     },
     claude_isolation_adherence: {
       type: "noul",
       instructions:
         "Rate whether this plan strictly adheres to zero-touch isolation of the user's Anthropic / Claude configuration and credentials.",
+      criteria: {
+        true: "Strict isolation maintained",
+        false: "Plan attempts to touch configuration or credentials",
+      },
     },
   };
 }

@@ -171,7 +171,11 @@ export async function collectTaskEvidence(
   const gitStatus = gitStatusRes.output.trim();
 
   // 2. Git diff
-  const gitDiffRes = await executeTestCommand("git diff", cwd, 5000);
+  // 2. Git diff (capture staged and unstaged changes, fall back to plain git diff if HEAD doesn't exist)
+  let gitDiffRes = await executeTestCommand("git diff HEAD", cwd, 5000);
+  if (gitDiffRes.exitCode !== 0) {
+    gitDiffRes = await executeTestCommand("git diff", cwd, 5000);
+  }
   const gitDiff = gitDiffRes.output.trim();
   // 3. Test execution if command provided
   let testExitCode: number | null = null;

@@ -75,18 +75,22 @@ const defaultJudgeClient: ExpertJudgeClient = {
       return { error: "TYPESAFE_API_KEY environment variable is missing" };
     }
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
       const sanitized = preparePayloadSafe({
         state,
         questions: questions as Record<string, { type: "choice" | "score" | "noul"; instructions: string; criteria?: string[] }>,
       });
-      const res = await fetch("https://api.typesafe.ai/v1/judge", {
+      const res = await fetch("https://api.typesafe.ai/v1/systemone", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify(sanitized),
+        body: JSON.stringify({ model: "jev-latest", ...sanitized }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       if (!res.ok) {
         return { error: `TypeSafe API returned HTTP ${res.status}: ${res.statusText}` };
       }
@@ -164,18 +168,31 @@ export async function runPhaseMacroCheck(
   const questions: Record<string, ExpertJudgeQuestion> = {
     meets_criteria: {
       type: "noul",
-      instructions: "Does this implementation satisfy all planned deliverables without skipping requirements or faking tests?",
-      criteria: ["Implementation fulfills all listed acceptance criteria with real passing tests", "Implementation is partial, missing requirements, or stubs out needed functionality"],
+      instructions: "Does `unified_diff` satisfy all deliverables in `plan_requirements` without skipping requirements or faking tests?",
+      criteria: {
+        true: "Implementation fulfills all listed acceptance criteria with real passing tests",
+        false: "Implementation is partial, missing requirements, or stubs out needed functionality",
+      },
     },
     architectural_drift: {
       type: "choice",
-      instructions: "Assess whether the diff adheres to planned architecture and file ownership boundaries:",
-      criteria: ["no_drift: Strict adherence to architecture", "unapproved_deviation: Unplanned architectural deviation", "scope_creep: Scope creep into unrelated files"],
+      instructions: "Assess whether the `unified_diff` adheres to planned architecture and file ownership boundaries:",
+      criteria: {
+        no_drift: "Strict adherence to architecture",
+        unapproved_deviation: "Unplanned architectural deviation",
+        scope_creep: "Scope creep into unrelated files",
+        other: "Unrecognized architectural change",
+      },
     },
     scope_mode: {
       type: "choice",
-      instructions: "Assess whether scope was maintained, expanded, or reduced:",
-      criteria: ["HOLD: Preserves planned requirements exactly", "EXPANSION: Justified addition of edge cases or tests", "REDUCTION: Omits requested functionality"],
+      instructions: "Assess whether scope was maintained, expanded, or reduced based on `plan_requirements`:",
+      criteria: {
+        HOLD: "Preserves planned requirements exactly",
+        EXPANSION: "Justified addition of edge cases or tests",
+        REDUCTION: "Omits requested functionality",
+        other: "Other scope modification",
+      },
     },
   };
 
@@ -197,12 +214,25 @@ export async function runPhaseMacroCheck(
   }
 
   const answers = response.answers;
-  const meetsCriteriaNoul = answers.meets_criteria?.noul ?? 0;
-  const driftChoice = answers.architectural_drift?.choice ?? answers.architectural_drift_guard?.choice ?? "unapproved_deviation";
-  const scopeChoice = answers.scope_mode?.choice ?? answers.scope_arbiter?.choice ?? "HOLD";
+  const meetsCriteriaNoul = answers.meets_criteria?.noul;
+  const driftChoice = (answers.architectural_drift?.choice ?? answers.architectural_drift_guard?.choice) as DriftChoice | undefined;
+  const scopeChoice = (answers.scope_mode?.choice ?? answers.scope_arbiter?.choice) as ScopeChoice | undefined;
   const riskScore = answers.risk_score?.score ?? answers.risk_security_triage?.score;
-  const expertConfidence = answers.meets_criteria?.confidence ?? 0.92;
+  const expertConfidence = answers.architectural_drift?.confidence ?? answers.scope_mode?.confidence ?? meetsCriteriaNoul ?? 0.0;
 
+  if (meetsCriteriaNoul === undefined || !driftChoice || !scopeChoice) {
+    return {
+      approved: false,
+      reasons: ["Incomplete TypeSafe evaluation: one or more required judgment dimensions were missing."],
+      escalateToUser: true,
+      error: "incomplete_response",
+      meetsCriteriaNoul: meetsCriteriaNoul ?? 0,
+      driftChoice: driftChoice ?? "unapproved_deviation",
+      scopeChoice: scopeChoice ?? "REDUCTION",
+      riskScore,
+      expertConfidence,
+    };
+  }
   let approved = true;
 
   if (meetsCriteriaNoul < 0.7) {
@@ -245,12 +275,21 @@ export async function evaluateScopeArbiter(
     scope_arbiter: {
       type: "choice",
       instructions: "Evaluate the implementation scope relative to plan requirements:",
-      criteria: ["HOLD: Diff precisely matches requirements", "EXPANSION: Justified additions", "REDUCTION: Drops requirements"],
+      criteria: {
+        HOLD: "Diff precisely matches requirements",
+        EXPANSION: "Justified additions",
+        REDUCTION: "Drops requirements",
+        other: "Unrecognized scope alteration",
+      },
     },
   };
 
   const response = await client.evaluate({ state, questions });
-  const choice = response.answers?.scope_arbiter?.choice ?? "HOLD";
+  if (response.error) {
+    throw new Error(`TypeSafe error during scope evaluation: ${response.error}`);
+  }
+  const choice = response.answers?.scope_arbiter?.choice as ScopeChoice;
+  if (!choice) throw new Error("Missing scope_arbiter choice from TypeSafe");
   const approved = choice !== "REDUCTION";
 
   return {
@@ -273,12 +312,21 @@ export async function evaluateDriftGuard(
     architectural_drift_guard: {
       type: "choice",
       instructions: "Evaluate whether code adheres to planned architecture and contracts:",
-      criteria: ["no_drift: Strict adherence", "unapproved_deviation: Deviates from planned architecture", "scope_creep: Touches unrelated areas"],
+      criteria: {
+        no_drift: "Strict adherence",
+        unapproved_deviation: "Deviates from planned architecture",
+        scope_creep: "Touches unrelated areas",
+        other: "Other drift type",
+      },
     },
   };
 
   const response = await client.evaluate({ state, questions });
-  const choice = response.answers?.architectural_drift_guard?.choice ?? "no_drift";
+  if (response.error) {
+    throw new Error(`TypeSafe error during drift evaluation: ${response.error}`);
+  }
+  const choice = response.answers?.architectural_drift_guard?.choice as DriftChoice;
+  if (!choice) throw new Error("Missing architectural_drift_guard choice from TypeSafe");
   const approved = choice === "no_drift";
 
   return {
@@ -301,20 +349,24 @@ export async function evaluateRiskSecurityTriage(
       type: "score",
       instructions: "Rate technical trade-offs, security invariants, and edge case resilience:",
       criteria: [
-        "0: Critical Risk — severe flaw or security hole",
-        "1: Moderate Risk — trade-offs made without sufficient handling",
-        "2: Low Risk — minor edge case gaps with clean trade-offs",
-        "3: Zero Risk — robust implementation, full error handling",
+        "Zero Risk — robust implementation, full error handling",
+        "Low Risk — minor edge case gaps with clean trade-offs",
+        "Moderate Risk — trade-offs made without sufficient handling",
+        "Critical Risk — severe flaw or security hole",
       ],
     },
   };
 
   const response = await client.evaluate({ state, questions });
-  const score = response.answers?.risk_security_triage?.score ?? 3.0;
+  if (response.error) {
+    throw new Error(`TypeSafe error during risk evaluation: ${response.error}`);
+  }
+  const score = response.answers?.risk_security_triage?.score;
+  if (score === undefined) throw new Error("Missing risk_security_triage score from TypeSafe");
 
   return {
     score,
-    acceptable: score >= 1.5,
+    acceptable: score <= 1.5,
   };
 }
 

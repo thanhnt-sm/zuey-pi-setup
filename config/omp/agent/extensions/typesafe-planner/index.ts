@@ -2,6 +2,7 @@
 // Connects OMP planning workflows with TypeSafe System One judgments (Choice, Noul, Score).
 
 import { createRequire } from "node:module";
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { evaluatePlanDraft, type PlanJudgeClient, type PlanQuestion } from "./src/plan-evaluator";
@@ -238,6 +239,24 @@ const MAX_BODY_BYTES = 32768;
 const DISABLED_RESULT: ExtensionToolResult = {
   content: [{ type: "text", text: "TypeSafe disabled" }],
 };
+const PROTECTED_INTEGRITY_PATTERNS = [
+  "typesafe-planner.ts",
+  "models.yml",
+  "typesafe-policy-client.cjs",
+  "typesafe-redact.cjs",
+  "typesafe-enabled-resolver.cjs",
+];
+function hashToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex").slice(0, 16);
+}
+
+function sleep(ms: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, ms);
+  return promise;
+}
+
+
 
 /** Short, non-descriptive error code only — never forward upstream error
  * bodies, raw JSON, or exception messages to the model (contract Section 4). */
@@ -330,75 +349,17 @@ function sanitizeStateForTypeSafe(state: string | Record<string, unknown>): Reco
   return resolved;
 }
 
-function normalizeTypeSafePayload(params: TypeSafeJudgeParams): TypeSafeJudgeParams {
-  const normalizedQuestions: Record<string, TypeSafeQuestion> = {};
-  for (const [key, q] of Object.entries(params.questions)) {
-    if (!q || typeof q !== "object") {
-      normalizedQuestions[key] = q;
-      continue;
-    }
-    let instructions = q.instructions;
-    if (typeof instructions === "string") {
-      if (instructions.includes("Does this implementation satisfy all planned deliverables")) {
-        instructions = "Does `unified_diff` satisfy all deliverables in `plan_requirements` without skipping requirements or faking tests?";
-      }
-    }
-
-    if (q.type === "choice" && Array.isArray(q.criteria)) {
-      const dict: Record<string, string | null> = {};
-      for (let i = 0; i < q.criteria.length; i++) {
-        const item = String(q.criteria[i]);
-        const match = item.match(/^([a-zA-Z0-9_-]+)\s*[:\-]\s*(.*)$/);
-        if (match) {
-          dict[match[1]] = match[2].trim() || null;
-        } else {
-          const trimmed = item.trim();
-          const optionKey = trimmed.length > 0 ? trimmed : `option_${i}`;
-          dict[optionKey] = trimmed.length > 0 ? trimmed : `Option ${i}`;
-        }
-      }
-      normalizedQuestions[key] = {
-        ...q,
-        instructions,
-        criteria: dict,
-      };
-    } else if (q.type === "noul" && Array.isArray(q.criteria)) {
-      normalizedQuestions[key] = {
-        ...q,
-        instructions,
-        criteria: {
-          true: q.criteria[0] !== undefined ? String(q.criteria[0]) : "true",
-          false: q.criteria[1] !== undefined ? String(q.criteria[1]) : "false",
-        },
-      };
-    } else {
-      normalizedQuestions[key] = {
-        ...q,
-        instructions,
-      };
-    }
-  }
-  return {
-    state: params.state,
-    questions: normalizedQuestions,
-  };
-}
 
 export default function (pi: ExtensionAPI): void {
   const z = pi.zod;
 
-  // Flips true only on 401/403 (unauthorized/forbidden); persists for the
-  // rest of this OMP process so a revoked key doesn't keep retrying. A new
-  // key still requires an OMP restart to clear this, matching the MCP
-  // server's "disable in process" contract.
-  let disabledByAuthError = false;
-
+  // Dynamic Auth Watchdog: tracks auth failure per key hash, allowing dynamic
+  // self-healing when environment updates with a valid key without restart.
+  let lastFailedKeyHash: string | null = null;
+  let lastAlertedKeyHash: string | null = null;
   const PROMPT_INJECTION =
-    "TypeSafe System One is available via the `typesafe_judge` tool (noul/choice/score judgments), `typesafe_rerank`, and `typesafe_evaluate_multi` for scope challenge, plan validation, and risk assessment. Tighten-only policies are enforced structurally by the host: a result may only add a gate, lower auto-approve, or raise review level — never select auto/no-test/fast or skip review/test. Attempting to output a decision below the current baseline will result in a hard rejection. A choice outside the options you sent is always an error. If the tool errors or reports disabled, you MUST inform the user that TypeSafe is unavailable due to configuration/credential errors; do not hide this from the user.";
-  // Activation prompt: a synchronous availability check only (key present +
-  // shared resolver reports this project opted in) — no network probe.
-  // If the key is later revoked, the tool itself reports "unauthorized" on
-  // its next call; this prompt never re-fires mid-session either way.
+    "TypeSafe System One is integrated into the host for all human handoffs and task completions. When you call the 'ask' tool to present decisions to the user, TypeSafe automatically evaluates your proposal and attaches a risk/clarity verdict directly to what the human sees (high risk increases human oversight, never blocks it). When you mark a task complete via 'todo done', the completion is strictly hard-gated: Gate 1 verifies tests locally, and Gate 2 runs a TypeSafe Macro-Check that actively rejects completion if requirements are dropped or architectural drift occurs. Tighten-only policies are enforced structurally. If you encounter auth or configuration errors, you MUST inform the user.";
+  // Session Pre-Flight Health Probe (Phase 3): event-driven diagnostic probe on session_start.
   pi.on("session_start", async (_event: unknown, ctx: unknown) => {
     try {
       const apiKey = process.env.TYPESAFE_API_KEY?.trim();
@@ -411,26 +372,110 @@ export default function (pi: ExtensionAPI): void {
       const { enabled } = resolverModule.resolveTypeSafeEnabled(projectDir);
       if (!enabled) return;
 
-      await pi.sendMessage(
-        { customType: "typesafe-planner", content: PROMPT_INJECTION, display: false },
-        { deliverAs: "nextTurn" }
-      );
+      // Minimal probe payload (<200 bytes) with 3000ms abort deadline
+      try {
+        const probeSignal = AbortSignal.timeout(3000);
+        const probePayload = JSON.stringify({
+          state: "ping",
+          questions: { ping: { type: "noul", instructions: "ping" } },
+          model: "jev-latest",
+        });
+
+        const probeRes = await fetch("https://api.typesafe.ai/v1/systemone", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: probePayload,
+          signal: probeSignal,
+        });
+
+        if (probeRes.status === 401 || probeRes.status === 403) {
+          lastFailedKeyHash = hashToken(apiKey);
+          await pi.sendMessage(
+            {
+              customType: "typesafe-health",
+              content: "TypeSafe warning: TYPESAFE_API_KEY is invalid or expired. Check your environment configuration.",
+              display: true,
+            },
+            { deliverAs: "nextTurn" }
+          );
+          return;
+        }
+
+        if (probeRes.status === 404) {
+          await pi.sendMessage(
+            {
+              customType: "typesafe-health",
+              content: "TypeSafe warning: TypeSafe endpoint returned 404 Not Found. Verify models.yml baseUrl does not have an extraneous '/v1' suffix.",
+              display: true,
+            },
+            { deliverAs: "nextTurn" }
+          );
+          return;
+        }
+
+        if (probeRes.ok) {
+          await pi.sendMessage(
+            {
+              customType: "typesafe-health",
+              content: "TypeSafe: ONLINE (jev-latest)",
+              display: true,
+            },
+            { deliverAs: "nextTurn" }
+          );
+          await pi.sendMessage(
+            { customType: "typesafe-planner", content: PROMPT_INJECTION, display: false },
+            { deliverAs: "nextTurn" }
+          );
+          return;
+        }
+
+        await pi.sendMessage(
+          {
+            customType: "typesafe-health",
+            content: `TypeSafe warning: Pre-flight probe failed with HTTP status ${probeRes.status}.`,
+            display: true,
+          },
+          { deliverAs: "nextTurn" }
+        );
+      } catch {
+        await pi.sendMessage(
+          {
+            customType: "typesafe-health",
+            content: "TypeSafe warning: TypeSafe API unreachable. Check internet connection or proxy settings.",
+            display: true,
+          },
+          { deliverAs: "nextTurn" }
+        );
+      }
     } catch {
       // Non-critical notification failure — the tool is registered
       // regardless and will report "TypeSafe disabled" if actually called.
     }
   });
-
+  const handledToolCallIds = new Set<string>();
   async function handleTodoInterception(event: unknown, ctx: unknown): Promise<void> {
     if (!event || typeof event !== "object") return;
     const evt = event as Record<string, unknown>;
+    const callId = (evt.toolCallId || evt.id || evt.callId) as string | undefined;
+    if (callId) {
+      if (handledToolCallIds.has(callId)) return;
+      handledToolCallIds.add(callId);
+      if (handledToolCallIds.size > 500) {
+        const first = handledToolCallIds.values().next().value;
+        if (first) handledToolCallIds.delete(first);
+      }
+    }
     const toolName = (evt.tool || evt.name || evt.toolName) as string | undefined;
-
-    // Direct File Bypass Defense (RT-3): Block write/edit tools targeting todo.json or .todo*
+    // Direct File Bypass Defense (RT-3) & Resource Integrity Shield (Phase 1)
     if (toolName === "write" || toolName === "edit") {
       const params = (evt.params || evt.args || evt.input || {}) as Record<string, unknown>;
       const targetPath = ((params.path as string) || (params.filepath as string) || "").trim();
-      const baseName = targetPath.replace(/\\/g, "/").split("/").pop() || "";
+      const normalizedPath = targetPath.replace(/\\/g, "/");
+      const baseName = normalizedPath.split("/").pop() || "";
+
       if (baseName === "todo.json" || baseName.startsWith(".todo")) {
         const msg = "Direct file modification of todo.json is prohibited. Task state must be managed via the todo tool.";
         if (typeof evt.cancel === "function") {
@@ -441,6 +486,143 @@ export default function (pi: ExtensionAPI): void {
           content: msg,
         });
         throw new Error(msg);
+      }
+
+      const isProtected = PROTECTED_INTEGRITY_PATTERNS.some((pattern) => {
+        const patLower = pattern.toLowerCase();
+        if (baseName.toLowerCase() === patLower) return true;
+        if (normalizedPath.toLowerCase().endsWith("/" + patLower)) return true;
+        try {
+          const resolved = path.resolve(getProjectDir(ctx), targetPath).replace(/\\/g, "/");
+          return resolved.toLowerCase().endsWith("/" + patLower) || resolved.toLowerCase() === patLower;
+        } catch {
+          return targetPath.toLowerCase().includes(patLower);
+        }
+      });
+
+      if (isProtected) {
+        if (params.allowJudgeModification === true) {
+          return;
+        }
+        const msg = `Direct file modification of protected TypeSafe infrastructure (${baseName || targetPath}) is prohibited without explicit authorization (allowJudgeModification: true).`;
+        if (typeof evt.cancel === "function") {
+          (evt.cancel as (r: string) => void)(msg);
+        }
+        await pi.sendMessage({
+          customType: "typesafe-integrity-violation",
+          content: msg,
+        });
+        throw new Error(msg);
+      }
+      return;
+    }
+
+    // Human Decision Interception: Automatically evaluate any decision/question before it reaches the human
+    if (toolName === "ask") {
+      const params = (evt.params || evt.args || evt.input || {}) as Record<string, unknown>;
+      const apiKey = process.env.TYPESAFE_API_KEY?.trim();
+      const resolverModule = loadResolverModule();
+      const projectDir = getProjectDir(ctx);
+      const isEnabled = apiKey && resolverModule && resolverModule.resolveTypeSafeEnabled(projectDir).enabled;
+
+      if (!isEnabled || !apiKey) {
+        const note = "\n\n⚠️ [TypeSafe System One: Evaluation offline / not configured]";
+        if (Array.isArray(params.questions) && params.questions[0] && typeof params.questions[0] === "object") {
+          const q = params.questions[0] as Record<string, unknown>;
+          if (typeof q.question === "string") q.question += note;
+        } else if (typeof params.question === "string") {
+          params.question += note;
+        }
+        return;
+      }
+
+      try {
+        const client = createExtensionJudgeClient(apiKey, undefined, ctx);
+        const questionsPayload = params.questions || params.question || params;
+        const state = JSON.stringify({
+          intent: params.i || "Decision presented to human",
+          questions: questionsPayload,
+          projectDir,
+        });
+
+        const questions: Record<string, ExpertJudgeQuestion> = {
+          risk_posture: {
+            type: "score",
+            instructions: "Rate the technical risk and security implications of this proposal or question being presented to the human:",
+            criteria: [
+              "Zero Risk — routine inquiry, safe tradeoffs, fully bounded options",
+              "Low Risk — minor architectural choice with manageable side effects",
+              "Moderate Risk — tradeoffs involving data, architecture, or credentials requiring human scrutiny",
+              "Critical Risk — dangerous action, security sensitive choice, or potential data loss",
+            ],
+          },
+          decision_clarity: {
+            type: "noul",
+            instructions: "Does this question present clear, actionable, mutually distinct choices to the human without misleading information?",
+            criteria: {
+              true: "Choices are distinct, well-explained, and technically clear",
+              false: "Choices are vague, incomplete, misleading, or poorly formed",
+            },
+          },
+        };
+
+        const response = await client.evaluate({ state, questions });
+        if (response.error || !response.answers) {
+          const note = `\n\n⚠️ [TypeSafe System One: Evaluation unavailable (${response.error || "no response"})]`;
+          if (Array.isArray(params.questions) && params.questions[0] && typeof params.questions[0] === "object") {
+            const q = params.questions[0] as Record<string, unknown>;
+            if (typeof q.question === "string") q.question += note;
+          } else if (typeof params.question === "string") {
+            params.question += note;
+          }
+          return;
+        }
+
+        const riskScore = response.answers.risk_posture?.score;
+        const clarity = response.answers.decision_clarity?.noul;
+        if (riskScore === undefined || clarity === undefined) {
+          const note = "\n\n⚠️ [TypeSafe System One: Incomplete evaluation - proceeding with human review]";
+          if (Array.isArray(params.questions) && params.questions[0] && typeof params.questions[0] === "object") {
+            const q = params.questions[0] as Record<string, unknown>;
+            if (typeof q.question === "string") q.question += note;
+          } else if (typeof params.question === "string") {
+            params.question += note;
+          }
+          return;
+        }
+
+        const riskLabel = riskScore <= 1.0 ? "Low" : riskScore <= 2.0 ? "Moderate" : "High/Critical";
+        const annotation = `\n\n🛡️ [TypeSafe System One Verdict]: Risk: ${riskLabel} (${riskScore.toFixed(1)}/3) | Decision Clarity: ${Math.round(clarity * 100)}%`;
+
+        if (Array.isArray(params.questions)) {
+          for (const q of params.questions) {
+            if (q && typeof q === "object") {
+              const qObj = q as Record<string, unknown>;
+              if (typeof qObj.question === "string") {
+                qObj.question += annotation;
+              }
+              if (typeof qObj.header === "string") {
+                qObj.header = `[${riskLabel} Risk] ${qObj.header}`;
+              }
+            }
+          }
+        } else if (typeof params.question === "string") {
+          params.question += annotation;
+        }
+
+        await pi.sendMessage({
+          customType: "typesafe-human-verdict",
+          content: `TypeSafe System One evaluated human handoff:\n- Risk: ${riskLabel} (${riskScore.toFixed(1)}/3)\n- Clarity: ${Math.round(clarity * 100)}%`,
+          display: true,
+        });
+      } catch {
+        const note = "\n\n⚠️ [TypeSafe System One: Evaluation failed - proceeding with human review]";
+        if (Array.isArray(params.questions) && params.questions[0] && typeof params.questions[0] === "object") {
+          const q = params.questions[0] as Record<string, unknown>;
+          if (typeof q.question === "string") q.question += note;
+        } else if (typeof params.question === "string") {
+          params.question += note;
+        }
       }
       return;
     }
@@ -492,36 +674,30 @@ export default function (pi: ExtensionAPI): void {
       throw new Error(msg);
     }
 
-    const isPhaseOrGated =
-      /phase|gate|deliverable|milestone/i.test(taskId) ||
-      Boolean(planPath) ||
-      evidence.criteria.length > 0;
-
-    if (isPhaseOrGated) {
-      const client = createExtensionJudgeClient(apiKey, undefined, ctx);
-      const macroResult = await runPhaseMacroCheck(
-        {
-          phaseTitle: taskId,
-          planRequirements: evidence.criteria.length > 0 ? evidence.criteria : [taskId],
-          diffSummary: evidence.gitStatus || "No unstaged changes",
-          unifiedDiff: evidence.gitDiff || "+ // No diff",
-          testSummary: evidence.testOutput || "Tests passed",
-        },
-        client
-      );
-      if (!macroResult.approved) {
-        const msg = `Task completion rejected by TypeSafe Dual Verification Gate (Gate 2 Macro-Check):\n- ${macroResult.reasons.join("\n- ")}`;
-        if (typeof evt.cancel === "function") {
-          (evt.cancel as (r: string) => void)(msg);
-        }
-        await pi.sendMessage({
-          customType: macroResult.escalateToUser
-            ? "typesafe-compliance-escalation"
-            : "typesafe-compliance",
-          content: msg,
-        });
-        throw new Error(msg);
+    // Gate 2: Semantic macro-check against TypeSafe System One runs for ALL task completions
+    const client = createExtensionJudgeClient(apiKey, undefined, ctx);
+    const macroResult = await runPhaseMacroCheck(
+      {
+        phaseTitle: taskId,
+        planRequirements: evidence.criteria.length > 0 ? evidence.criteria : [taskId],
+        diffSummary: evidence.gitStatus || "No unstaged changes",
+        unifiedDiff: evidence.gitDiff || "+ // No diff",
+        testSummary: evidence.testOutput || "Tests passed",
+      },
+      client
+    );
+    if (!macroResult.approved) {
+      const msg = `Task completion rejected by TypeSafe Dual Verification Gate (Gate 2 Macro-Check):\n- ${macroResult.reasons.join("\n- ")}`;
+      if (typeof evt.cancel === "function") {
+        (evt.cancel as (r: string) => void)(msg);
       }
+      await pi.sendMessage({
+        customType: macroResult.escalateToUser
+          ? "typesafe-compliance-escalation"
+          : "typesafe-compliance",
+        content: msg,
+      });
+      throw new Error(msg);
     }
   }
 
@@ -556,8 +732,10 @@ export default function (pi: ExtensionAPI): void {
     signal?: AbortSignal,
     ctx?: unknown
   ): Promise<ExtensionToolResult> {
-    if (disabledByAuthError) return DISABLED_RESULT;
-
+    const currentKeyHash = hashToken(apiKey);
+    if (lastFailedKeyHash !== null && currentKeyHash === lastFailedKeyHash) {
+      return DISABLED_RESULT;
+    }
     const resolverModule = loadResolverModule();
     if (!resolverModule) return DISABLED_RESULT;
 
@@ -571,12 +749,12 @@ export default function (pi: ExtensionAPI): void {
     const policyClientModule = loadPolicyClientModule();
 
     const sanitizedState = sanitizeStateForTypeSafe(params.state);
-    const normalizedParams = normalizeTypeSafePayload({
+    const validParams = {
       state: sanitizedState,
       questions: params.questions,
-    });
+    };
 
-    const validation = apiClientModule.validateInput(normalizedParams);
+    const validation = apiClientModule.validateInput(validParams);
     if (!validation.ok) {
       return { content: [{ type: "text", text: validation.message ?? "invalid_input" }] };
     }
@@ -584,7 +762,7 @@ export default function (pi: ExtensionAPI): void {
     const redactModule = loadRedactModule();
     if (!redactModule) return DISABLED_RESULT;
 
-    const outgoing = { state: normalizedParams.state, questions: normalizedParams.questions, model: "jev-latest" };
+    const outgoing = { state: validParams.state, questions: validParams.questions, model: "jev-latest" };
     let prepared: typeof outgoing;
     try {
       prepared = redactModule.preparePayload(outgoing, { maxBytes: MAX_BODY_BYTES, apiKey }) as typeof outgoing;
@@ -605,7 +783,7 @@ export default function (pi: ExtensionAPI): void {
         ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
         : AbortSignal.timeout(10_000);
 
-      const res = await fetch("https://api.typesafe.ai/v1/systemone", {
+      let res = await fetch("https://api.typesafe.ai/v1/systemone", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -614,12 +792,36 @@ export default function (pi: ExtensionAPI): void {
         body: bodyStr,
         signal: fetchSignal,
       });
+      if (res.status === 502 || res.status === 503 || res.status === 504) {
+        const delay = 50 + Math.floor(Math.random() * 100);
+        await sleep(delay);
+        res = await fetch("https://api.typesafe.ai/v1/systemone", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: bodyStr,
+          signal: fetchSignal,
+        });
+      }
 
       if (res.status === 401 || res.status === 403) {
-        disabledByAuthError = true;
+        lastFailedKeyHash = currentKeyHash;
+        if (lastAlertedKeyHash !== currentKeyHash) {
+          lastAlertedKeyHash = currentKeyHash;
+          await pi.sendMessage({
+            customType: "typesafe-auth-recovery",
+            content: "TypeSafe authentication failed (HTTP 401/403). TYPESAFE_API_KEY is invalid or revoked. Update the key in your environment to automatically restore service.",
+            display: true,
+          }).catch(() => {});
+        }
         return shortError("unauthorized");
       }
 
+      if (lastFailedKeyHash === currentKeyHash) {
+        lastFailedKeyHash = null;
+      }
       if (!res.ok) {
         return shortError(`http_${res.status}`);
       }
