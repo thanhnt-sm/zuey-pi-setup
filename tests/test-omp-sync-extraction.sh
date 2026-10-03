@@ -50,9 +50,9 @@ git init -b main --quiet
 git config user.email "local@example.com"
 git config user.name "Local Dev"
 
-mkdir -p config/omp/agent/extensions config/omp/plugins
-echo "# Local Initial System" > config/omp/agent/APPEND_SYSTEM.md
-cat <<'EOF' > config/omp/plugins/package.json
+mkdir -p config/omp-upstream/agent/extensions config/omp-upstream/plugins
+echo "# Local Initial System" > config/omp-upstream/agent/APPEND_SYSTEM.md
+cat <<'EOF' > config/omp-upstream/plugins/package.json
 {
   "name": "omp-plugins",
   "private": true,
@@ -61,7 +61,7 @@ cat <<'EOF' > config/omp/plugins/package.json
   }
 }
 EOF
-cat <<'EOF' > config/omp/.omp-syncignore
+cat <<'EOF' > config/omp-upstream/.omp-syncignore
 pi-lens
 EOF
 
@@ -110,43 +110,48 @@ fi
 echo "✓ PASS: .git/MERGE_HEAD does not exist (no merge pollution)"
 
 # Assertion 3c: Verify extracted files match upstream exactly
-if ! grep -q "Upstream APPEND_SYSTEM Content v2.0" config/omp/agent/APPEND_SYSTEM.md; then
-  echo "FAIL: config/omp/agent/APPEND_SYSTEM.md was not extracted cleanly!" >&2
+if ! grep -q "Upstream APPEND_SYSTEM Content v2.0" config/omp-upstream/agent/APPEND_SYSTEM.md; then
+  echo "FAIL: config/omp-upstream/agent/APPEND_SYSTEM.md was not extracted cleanly!" >&2
   exit 1
 fi
-echo "✓ PASS: config/omp/agent/APPEND_SYSTEM.md extracted"
+echo "✓ PASS: config/omp-upstream/agent/APPEND_SYSTEM.md extracted"
 
-if ! grep -q "ratio: 0.8" config/omp/agent/extensions/compaction-policy.ts; then
+if ! grep -q "ratio: 0.8" config/omp-upstream/agent/extensions/compaction-policy.ts; then
   echo "FAIL: compaction-policy.ts was not extracted cleanly!" >&2
   exit 1
 fi
 echo "✓ PASS: compaction-policy.ts extracted"
 
-if ! grep -q "custom-v2" config/omp/agent/extensions/pi-footer.json; then
+if ! grep -q "custom-v2" config/omp-upstream/agent/extensions/pi-footer.json; then
   echo "FAIL: pi-footer.json was not extracted cleanly!" >&2
   exit 1
 fi
 echo "✓ PASS: pi-footer.json extracted"
 
-if ! grep -q "cacheTps = true" config/omp/agent/extensions/pi-footer-cache-tps.ts; then
+if ! grep -q "cacheTps = true" config/omp-upstream/agent/extensions/pi-footer-cache-tps.ts; then
   echo "FAIL: pi-footer-cache-tps.ts was not extracted cleanly!" >&2
   exit 1
 fi
 echo "✓ PASS: pi-footer-cache-tps.ts extracted"
 
 # Assertion 3d: Verify package.json updated without pi-lens
-PKG_CONTENT="$(cat config/omp/plugins/package.json)"
+PKG_CONTENT="$(cat config/omp-upstream/plugins/package.json)"
 if echo "$PKG_CONTENT" | grep -q "pi-lens"; then
-  echo "FAIL: pi-lens found in config/omp/plugins/package.json!" >&2
+  echo "FAIL: pi-lens found in config/omp-upstream/plugins/package.json!" >&2
   exit 1
 fi
 
 if ! echo "$PKG_CONTENT" | grep -q "pi-web-access"; then
-  echo "FAIL: pi-web-access missing from config/omp/plugins/package.json!" >&2
+  echo "FAIL: pi-web-access missing from config/omp-upstream/plugins/package.json!" >&2
   exit 1
 fi
 
-echo "✓ PASS: config/omp/plugins/package.json properly filtered"
+if [ -e config/omp ]; then
+  echo "FAIL: sync wrote into config/omp (backup-owned snapshot)!" >&2
+  exit 1
+fi
+
+echo "✓ PASS: config/omp-upstream/plugins/package.json properly filtered; config/omp untouched"
 
 echo "=== ALL TESTS IN test-omp-sync-extraction.sh PASSED ==="
 cd "$ROOT"

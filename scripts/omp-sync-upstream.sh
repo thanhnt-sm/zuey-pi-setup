@@ -99,7 +99,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --upstream-remote <name> Upstream remote name (default: upstream)"
       echo "  --upstream-url <url>    Upstream git URL (default: https://github.com/mrgoonie/zuey-pi-setup.git)"
       echo "  --upstream-ref <ref>    Upstream git ref to extract from (default: upstream/main)"
-      echo "  --config-dir <dir>      OMP mirror configuration directory (default: <repo-dir>/config/omp)"
+      echo "  --config-dir <dir>      Upstream overlay directory (default: <repo-dir>/config/omp-upstream)"
       echo "  --syncignore <file>     Path to .omp-syncignore blocklist"
       echo "  --package-json <file>   Path to plugins package.json"
       echo "  --settings-file <file>  Explicit local settings.json (bypasses git show)"
@@ -118,8 +118,10 @@ done
 
 cd "$REPO_DIR"
 
+# Upstream-ported files live in their own overlay dir. config/omp is the live snapshot owned by
+# omp-setup-backup.sh, which wipes it on every --config-dir run.
 if [ -z "$CONFIG_DIR" ]; then
-  CONFIG_DIR="$REPO_DIR/config/omp"
+  CONFIG_DIR="$REPO_DIR/config/omp-upstream"
 fi
 
 if [ -z "$SYNCIGNORE_FILE" ]; then
@@ -310,8 +312,9 @@ if [ "$DO_BACKUP" != "never" ]; then
 
   if [ "$DO_BACKUP" = "always" ] || [ "$PRE_DIFF_STATE" != "$POST_DIFF_STATE" ]; then
     if [ -f "$BACKUP_SCRIPT" ]; then
-      echo "Changes detected in $CONFIG_DIR. Triggering backup..."
-      "$BACKUP_SCRIPT" --config-dir "$CONFIG_DIR"
+      echo "Changes detected in $CONFIG_DIR. Rebuilding portable tarball with the new overlay..."
+      "$BACKUP_SCRIPT" --config-dir "$REPO_DIR/config/omp" --upstream-dir "$CONFIG_DIR" \
+        -o "$REPO_DIR/backups/omp-setup-portable.tar.gz"
     else
       echo "Notice: Backup script $BACKUP_SCRIPT not found. Skipping backup."
     fi

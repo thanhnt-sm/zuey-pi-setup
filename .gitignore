@@ -24,3 +24,7 @@ screenshots/originals/
 node_modules/
 /omp-setup-portable.tar.gz
 /omp-setup-portable.tar.gz.tmp.*
+
+# Backup riêng tư của omp (memory/history/kit) — không bao giờ track
+*.gpg
+omp-private-*.tar.gz
