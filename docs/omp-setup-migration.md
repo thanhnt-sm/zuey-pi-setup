@@ -163,11 +163,39 @@ Mỗi provider có `apiKey` literal trên máy cũ sẽ được đổi thành `
 OAuth nằm trong `~/.omp/agent/agent.db` (bảng `auth_credentials`) và không được export, vì token gắn với máy và tự xoay vòng. Máy cũ có 5 phiên: 1 `google-antigravity`, 4 `openai-codex`. Khởi động `omp` và dùng `/login` cho từng provider.
 
 ### Bước 6 (tùy chọn): Khôi phục dữ liệu riêng tư
-Tắt omp trước, rồi:
+Tắt omp trước, rồi chạy script khôi phục tự động (khuyến nghị trên mọi hệ điều hành):
 ```bash
-gpg -d omp-private-<ts>.tar.gz.gpg | tar -xzf - -C ~
-find ~/.omp/agent -name "*.db-wal" -o -name "*.db-shm" -delete
+./scripts/omp-private-restore.sh ~/omp-private-backups/omp-private-<ts>.tar.gz.gpg
 ```
+Script sẽ tự động gán `GPG_TTY=$(tty)`, dọn lock cũ, cấu hình `pinentry-mac` trên Apple Silicon nếu có (hoặc tự động fallback sang `allow-loopback-pinentry` / `--pinentry-mode loopback`), và xóa sạch file SQLite WAL/SHM tạm sau khi giải nén.
+
+#### Cách cấu hình thủ công hoặc xử lý khi bị treo trên macOS M1 / Headless
+Nếu restore thủ công hoặc gặp hiện tượng GPG treo không hiện hộp thoại nhập mật khẩu trên Apple Silicon:
+
+1. **Cấu hình GUI Prompt chính thức (macOS M1 / Apple Silicon)**:
+   ```bash
+   brew install pinentry-mac
+   echo "pinentry-program /opt/homebrew/bin/pinentry-mac" >> ~/.gnupg/gpg-agent.conf
+   gpgconf --kill gpg-agent
+   ```
+   *(Lưu ý: Trên macOS Intel, đường dẫn là `/usr/local/bin/pinentry-mac`)*.
+
+2. **Cấu hình Terminal / Headless Fallback**:
+   ```bash
+   echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+   gpgconf --kill gpg-agent
+   export GPG_TTY=$(tty 2>/dev/null || echo /dev/tty)
+   gpg --pinentry-mode loopback -d omp-private-<ts>.tar.gz.gpg | tar -xzf - -C ~
+   find ~/.omp/agent \( -name "*.db-wal" -o -name "*.db-shm" \) -delete
+   ```
+
+3. **Thoát khỏi trạng thái bị treo**:
+   Nếu GPG bị treo ở tiến trình trước đó, hủy tiến trình agent và xóa lock:
+   ```bash
+   killall gpg-agent 2>/dev/null || true
+   rm -f ~/.gnupg/*.lock
+   ```
+
 Đường dẫn trong archive tương đối với `$HOME` (`.omp/agent/memories/...`, `.omp/agent/history.db`, `.claude/mcp/typesafe/...`).
 
 ### Bước 7: Khởi động Oh-My-Pi

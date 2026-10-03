@@ -23,8 +23,12 @@
 # OAuth logins (agent.db auth_credentials) are deliberately NOT exported: re-login is documented instead.
 #
 # Restore (omp stopped):
-#   gpg -d <archive> | tar -xzf - -C ~
-#   find ~/.omp/agent -name "*.db-wal" -o -name "*.db-shm" -delete
+#   ./scripts/omp-private-restore.sh <archive>
+#
+# Manual fallback (requires GPG_TTY on macOS M1 / headless):
+#   export GPG_TTY=$(tty 2>/dev/null || echo /dev/tty)
+#   gpg --pinentry-mode loopback -d <archive> | tar -xzf - -C ~
+#   find ~/.omp/agent \( -name "*.db-wal" -o -name "*.db-shm" \) -delete
 #
 set -euo pipefail
 
@@ -189,5 +193,8 @@ fi
 
 echo "✓ omp-private-backup: $OUT"
 echo "  Restore (omp stopped):"
-echo "    gpg -d \"$OUT\" | tar -xzf - -C ~"
-echo "    find ~/.omp/agent -name \"*.db-wal\" -o -name \"*.db-shm\" -delete"
+echo "    ./scripts/omp-private-restore.sh \"$OUT\""
+echo "    # Manual fallback:"
+echo "    #   export GPG_TTY=\$(tty 2>/dev/null || echo /dev/tty)"
+echo "    #   gpg --pinentry-mode loopback -d \"$OUT\" | tar -xzf - -C ~"
+echo "    #   find ~/.omp/agent \\( -name \"*.db-wal\" -o -name \"*.db-shm\" \\) -delete"
