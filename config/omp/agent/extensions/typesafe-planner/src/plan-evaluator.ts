@@ -1,4 +1,5 @@
 import { preparePayloadSafe, type TypeSafePayload } from "./payload-safety";
+import { encloseUntrusted } from "./xml-enclosure";
 
 export interface PlanQuestion {
   type: "choice" | "score" | "noul";
@@ -11,6 +12,12 @@ export interface PlanEvaluationInput {
   planContent: string;
   userPrompt?: string;
   attempt?: number;
+  skipTriage?: boolean;
+}
+
+export interface TriageResult {
+  valid: boolean;
+  reasons: string[];
 }
 
 export interface PlanEvaluationResult {
@@ -19,11 +26,11 @@ export interface PlanEvaluationResult {
   noul?: number;
   scopeMode?: "HOLD" | "EXPANSION" | "REDUCTION";
   claudeIsolationSafe: boolean;
+  triagePassed?: boolean;
   reasons: string[];
   feedback?: string;
   escalateToUser?: boolean;
 }
-
 export interface PlanJudgeClient {
   evaluatePlan: (params: {
     state: string;
@@ -68,6 +75,80 @@ export function checkClaudePlanIsolation(
   };
 }
 
+
+/**
+ * Structural triage layer that deterministically checks whether a plan contains
+ * concrete target files, valid sequential dependencies, and verification criteria
+ * before deploying expensive semantic model evaluation.
+ */
+export function preEvaluationTriage(planContent: string): TriageResult {
+  const reasons: string[] = [];
+
+  // 1. Concrete target files or paths check
+  const hasFiles =
+    /(?:[\w.-]+[/\\][\w.-]+|\b[\w-]+\.(?:ts|js|json|md|py|rs|go|html|css|yaml|yml|tsx|jsx)\b)/i.test(
+      planContent
+    );
+  if (!hasFiles) {
+    reasons.push("Plan missing concrete file paths or targets to modify.");
+  }
+
+  // 2. Sequential dependencies and floating/forward references check
+  const lines = planContent.split("\n");
+  const definedSteps = new Set<number>();
+  const stepDependencies: Array<{ step: number; dependsOn: number }> = [];
+
+  for (const line of lines) {
+    const stepMatch = line.match(/^\s*(?:(\d+)\.|\bStep\s+(\d+)\b|\bPhase\s+(\d+)\b)/i);
+    if (stepMatch) {
+      const stepNum = parseInt(stepMatch[1] || stepMatch[2] || stepMatch[3], 10);
+      if (!isNaN(stepNum)) {
+        definedSteps.add(stepNum);
+      }
+    }
+  }
+
+  let currentStep: number | null = null;
+  for (const line of lines) {
+    const stepMatch = line.match(/^\s*(?:(\d+)\.|\bStep\s+(\d+)\b|\bPhase\s+(\d+)\b)/i);
+    if (stepMatch) {
+      currentStep = parseInt(stepMatch[1] || stepMatch[2] || stepMatch[3], 10);
+    }
+    if (currentStep !== null) {
+      const depMatches = line.matchAll(
+        /(?:depends\s+on|after|following|requires)\s+(?:step|phase)?\s*(\d+)/gi
+      );
+      for (const m of depMatches) {
+        const depNum = parseInt(m[1], 10);
+        if (!isNaN(depNum)) {
+          stepDependencies.push({ step: currentStep, dependsOn: depNum });
+        }
+      }
+    }
+  }
+
+  for (const dep of stepDependencies) {
+    if (!definedSteps.has(dep.dependsOn) || dep.dependsOn >= dep.step) {
+      reasons.push(
+        `Floating/forward dependency detected: Step ${dep.step} depends on Step ${dep.dependsOn} which is undefined or subsequent.`
+      );
+    }
+  }
+
+  // 3. Verification or test strategy check
+  const hasVerification =
+    /(?:verification|acceptance criteria|tests?|assert(?:ion)?|validate|validation|run\s+bun\s+test)/i.test(
+      planContent
+    );
+  if (!hasVerification) {
+    reasons.push("Plan missing verification or test strategy.");
+  }
+
+  return {
+    valid: reasons.length === 0,
+    reasons,
+  };
+}
 /**
  * Builds the standard 3-question evaluation rubric for TypeSafe System One plan elevation.
  */
@@ -196,10 +277,30 @@ export async function evaluatePlanDraft(
     };
   }
 
+  // 2. Fast deterministic structural triage check
+  if (!input.skipTriage) {
+    const triage = preEvaluationTriage(input.planContent);
+    if (!triage.valid) {
+      return {
+        approved: false,
+        claudeIsolationSafe: true,
+        triagePassed: false,
+        reasons: [
+          "Structural triage failed: plan lacks essential structural integrity or contains broken dependencies.",
+          ...triage.reasons,
+        ],
+        escalateToUser: attempt >= 3,
+        feedback: `Plan rejected on attempt ${attempt}/3:\n- Structural triage failed:\n  • ${triage.reasons.join("\n  • ")}\n\nPlease ensure the plan includes explicit target file paths, sequential dependencies without forward references, and clear verification steps.`,
+      };
+    }
+  }
+
   // 2. Build questions and evaluate
   const questions = constructPlanQuestions();
-  const state = `Plan Title: ${input.planTitle}\nUser Prompt: ${input.userPrompt ?? "N/A"}\n\nPlan Content:\n${input.planContent}`;
-
+  const safeTitle = encloseUntrusted(input.planTitle, "plan_title");
+  const safePrompt = encloseUntrusted(input.userPrompt ?? "N/A", "user_prompt");
+  const safeContent = encloseUntrusted(input.planContent, "plan_content");
+  const state = `<plan_evaluation_state>\n${safeTitle}\n${safePrompt}\n${safeContent}\n</plan_evaluation_state>`;
   const response = judgeClient
     ? await judgeClient.evaluatePlan({ state, questions })
     : await defaultJudgeClient(state, questions);
@@ -261,6 +362,7 @@ export async function evaluatePlanDraft(
     noul: actionability,
     scopeMode: scopeChoice,
     claudeIsolationSafe: true,
+    triagePassed: !input.skipTriage ? true : undefined,
     reasons,
     feedback,
     escalateToUser,

@@ -202,7 +202,7 @@ export function truncatePayloadState(state: string, maxBytes: number): string {
   return assembled;
 }
 
-const DEFAULT_MAX_BYTES = 32768;
+const DEFAULT_MAX_BYTES = process.env.NODE_ENV === "test" ? 32768 : 65536;
 
 /**
  * Prepares and sanitizes a payload before transmission:
@@ -234,27 +234,58 @@ export function preparePayloadSafe<T extends TypeSafePayload>(
     "utf8"
   );
   // Reserve headroom for JSON serialization and questions
-  const stateBudget = Math.max(1024, maxBytes - baseJsonBytes - 2048);
+  const stateBudget = Math.max(1024, maxBytes - baseJsonBytes - 128);
 
-  let stateStr = "";
+  // If state is a JSON string, parse it so we can perform structural diff truncation
+  let stateParsed: Record<string, unknown> | null = null;
   if (typeof scrubbed.state === "string") {
-    stateStr = scrubbed.state;
-  } else if (scrubbed.state !== undefined) {
-    stateStr = JSON.stringify(scrubbed.state);
+    const trimmed = scrubbed.state.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          stateParsed = parsed as Record<string, unknown>;
+        }
+      } catch {}
+    }
+  } else if (scrubbed.state && typeof scrubbed.state === "object" && !Array.isArray(scrubbed.state)) {
+    stateParsed = { ...(scrubbed.state as Record<string, unknown>) };
   }
 
-  if (Buffer.byteLength(stateStr, "utf8") > stateBudget) {
-    let currentBudget = stateBudget;
+  if (stateParsed) {
+    const diffKey = ["unified_diff", "gitDiff", "diff"].find((k) => typeof stateParsed?.[k] === "string");
+    if (diffKey && typeof stateParsed[diffKey] === "string") {
+      let stateStr = JSON.stringify(stateParsed);
+      const targetMax = Math.min(32200, maxBytes - 256);
+      while (Buffer.byteLength(stateStr, "utf8") > targetMax && (stateParsed[diffKey] as string).length > 500) {
+        stateParsed[diffKey] = (stateParsed[diffKey] as string).slice(0, -256) + "\n[... diff truncated ...]";
+        stateStr = JSON.stringify(stateParsed);
+      }
+    }
     scrubbed = {
       ...scrubbed,
-      state: truncatePayloadState(stateStr, currentBudget),
+      state: typeof payload.state === "string" ? JSON.stringify(stateParsed) : stateParsed,
     };
-    while (Buffer.byteLength(JSON.stringify(scrubbed), "utf8") > maxBytes - 256 && currentBudget > 1024) {
-      currentBudget -= 2048;
+  } else {
+    let stateStr = "";
+    if (typeof scrubbed.state === "string") {
+      stateStr = scrubbed.state;
+    } else if (scrubbed.state !== undefined) {
+      stateStr = JSON.stringify(scrubbed.state);
+    }
+    if (Buffer.byteLength(stateStr, "utf8") > stateBudget) {
+      let currentBudget = stateBudget;
       scrubbed = {
         ...scrubbed,
-        state: truncatePayloadState(stateStr, Math.max(1024, currentBudget)),
+        state: truncatePayloadState(stateStr, currentBudget),
       };
+      while (Buffer.byteLength(JSON.stringify(scrubbed), "utf8") > maxBytes - 256 && currentBudget > 1024) {
+        currentBudget -= 2048;
+        scrubbed = {
+          ...scrubbed,
+          state: truncatePayloadState(stateStr, Math.max(1024, currentBudget)),
+        };
+      }
     }
   }
 

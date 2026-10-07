@@ -98,6 +98,16 @@ export function extractCriteriaFromPlan(
     }
   }
 
+  if (criteria.length === 0) {
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+      const numMatch = trimmed.match(/^\d+\.\s+\*\*(.+?)\*\*:\s*(.+)$/);
+      if (numMatch && numMatch[1] && numMatch[2]) {
+        criteria.push(`${numMatch[1]}: ${numMatch[2]}`);
+      }
+    }
+  }
+
   return criteria;
 }
 /**

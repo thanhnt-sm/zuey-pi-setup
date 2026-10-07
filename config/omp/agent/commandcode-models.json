@@ -586,14 +586,6 @@
       "maxTokens": 65536
     },
     {
-      "id": "stealth/space-bunny-alpha",
-      "name": "Space Bunny Alpha (CC)",
-      "api": "openai-completions",
-      "reasoning": false,
-      "contextWindow": 1000000,
-      "maxTokens": 65536
-    },
-    {
       "id": "poolside/laguna-s-2.1-free",
       "name": "Laguna S 2.1 (CC)",
       "api": "openai-completions",
@@ -679,6 +671,14 @@
       "api": "openai-completions",
       "reasoning": false,
       "contextWindow": 500000,
+      "maxTokens": 65536
+    },
+    {
+      "id": "mistral/mistral-large-4",
+      "name": "Mistral Large 4 (CC)",
+      "api": "openai-completions",
+      "reasoning": false,
+      "contextWindow": 524288,
       "maxTokens": 65536
     }
   ]
