@@ -45,6 +45,8 @@ Hệ thống phân tách rạch ròi 3 nhóm dữ liệu để đảm bảo **t�
    (omp-setup-backup.sh)
 ```
 
+> **Lưu ý về Extensions Backup:** Thư mục `extensions/` được sao lưu dưới dạng snapshot vật lý (dereferenced symlink) để đảm bảo tính di động (portable). Trên máy mới, đây là bản Read-Only. Không nên phát triển trực tiếp mã nguồn extension (như `typesafe-planner`) trong thư mục phục hồi này vì nó sẽ không liên kết với repository quản lý gốc của extension đó.
+
 | Tầng dữ liệu | Mục đích | Công cụ quản lý | Nơi lưu trữ | Tiêu chí an toàn |
 | :--- | :--- | :--- | :--- | :--- |
 | **Tầng 1: Public Portable Snapshot** | Tái tạo bộ khung cấu hình, tiện ích, extension trên máy mới | `./scripts/omp-setup-backup.sh` | `config/omp/` & `backups/omp-setup-portable.tar.gz` | Đã khử sạch secret (chuyển sang `!printenv`), không chứa file `.db`, không chứa lockfile chéo OS |
