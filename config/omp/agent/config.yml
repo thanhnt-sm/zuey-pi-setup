@@ -1,46 +1,56 @@
 shellPath: {{SHELL_PATH}}
 modelRoles:
-  judge: typesafe/jev-latest
-  advisor: google-antigravity/claude-opus-5-5-high:medium
-  plan: google-antigravity/claude-opus-5-5-high:medium
+  judge: typesafe/jev-1.14.0
+  advisor: anthropic/claude-sonnet-5-5:medium
+  plan: google-antigravity/claude-opus-4-6:medium
   smol: google-antigravity/gemini-3.8-flash:high
-  slow: google-antigravity/claude-opus-5-5-high:medium
+  slow: google-antigravity/gemini-4-argon:high
   vision: google-antigravity/gemini-3.8-flash:high
-  commit: google-antigravity/gemini-3.8-flash:medium
+  commit: google-antigravity/gemini-3.8-flash:high
   task: google-antigravity/gemini-3.8-flash:high
-  tiny: google-antigravity/gemini-3.8-flash:medium
+  tiny: google-antigravity/gemini-3.8-flash:high
   memory: google-antigravity/gemini-3.8-flash:high
   web: google-antigravity/gemini-3.8-flash:high
-  default: google-antigravity/claude-sonnet-5-5-medium:medium
+  default: google-antigravity/gemini-4-argon:high
+  widget: google-antigravity/gemini-3.8-flash:high
+  image: google-antigravity/gemini-3-pro-image
 symbolPreset: unicode
 composer:
   shape: box
 theme:
   dark: titanium
-setupVersion: 2
+setupVersion: 3
 defaultThinkingLevel: auto
 secrets:
   enabled: true
 dev:
   autoqa: false
+  autoqaConsent: denied
 startup:
   checkUpdate: true
 hideThinkingBlock: true
 plan:
   defaultOnStartup: true
+  enabled: false
+  autosave: true
+  autosaveDir: "<project>/plans/<YYMMDD-plan-name-folder>"
 retry:
   fallbackChains:
     google-antigravity/*:
-      - google-antigravity/gemini-3.1-pro
+      - google-antigravity/gemini-4-argon-high
       - google-antigravity/gemini-3.8-flash
     default:
-      - google-antigravity/gemini-3.1-pro
+      - google-antigravity/gemini-3.8-flash
     judge:
       - "@tiny"
       - "@smol"
       - "@default"
     openai-codex/*:
-      - google-antigravity/gemini-3.1-pro
+      - google-antigravity/gemini-4-argon
+    google-antigravity/claude-opus-5-5:
+      - openai-codex/gpt-5.6-terra
+    anthropic/claude-sonnet-5-5:
+      - openai-codex/gpt-5.6-terra
 advisor:
   enabled: true
   syncBacklog: "1"
@@ -74,6 +84,9 @@ task:
     security-reviewer: "on"
     sonic: "on"
     task: "on"
+  structured: true
+  isolation:
+    enabled: true
 cycleOrder:
   - smol
   - slow
@@ -92,8 +105,12 @@ edit:
     enabled: true
 skills:
   enableClaudeUser: true
-  customDirectories:
-    []
+  customDirectories: []
 providers:
+  streamFirstEventTimeoutSeconds: 300
   openai-codex:
     codeMode: "on"
+telemetry:
+  otlpExportEnabled: false
+update:
+  auto: true

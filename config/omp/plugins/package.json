@@ -2,6 +2,8 @@
   "name": "omp-plugins",
   "private": true,
   "dependencies": {
+    "omp-multi-auth": "npm:omp-multi-auth@^1.3.0",
+    "pi-antigravity": "npm:pi-antigravity@^0.11.0",
     "pi-commandcode-provider": "^0.6.0"
   }
 }

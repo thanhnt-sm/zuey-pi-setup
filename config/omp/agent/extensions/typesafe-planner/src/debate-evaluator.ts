@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+
 export interface TypeSafeQuestion {
   type: "noul" | "choice" | "score";
   instructions: string;
@@ -5,30 +7,41 @@ export interface TypeSafeQuestion {
   criteria?: string[];
 }
 
+export interface DebatePersonaVerdict {
+  score?: number;
+  verdict?: string;
+}
+
 export interface MultiPersonaDebateResult {
   approved: boolean;
+  status: "approved" | "rejected" | "unavailable" | "insufficient";
+  advisoryOnly: true;
+  /** Requested selector, not a claim about the model actually used by the provider. */
   modelTier: string;
-  consensusScore: number;
+  requestedModel: string;
+  resolvedModel?: string;
+  metadata?: Record<string, unknown>;
+  consensusScore?: number;
+  errorCode?: string;
   reasons: string[];
-  personas: {
-    architect: { score: number; verdict?: string };
-    security: { score: number; verdict?: string };
-    performance: { score: number; verdict?: string };
-    ux: { score: number; verdict?: string };
-    devils_advocate: { score: number; verdict?: string };
-  };
+  personas: Record<"architect" | "security" | "performance" | "ux" | "devils_advocate", DebatePersonaVerdict>;
+}
+
+export interface DebateJudgeResponse {
+  answers?: Record<string, unknown>;
+  modelUsed?: string;
+  metadata?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface DebateJudgeRequest {
+  state: string;
+  questions: Record<string, TypeSafeQuestion>;
+  model?: string;
 }
 
 export interface DebateJudgeClient {
-  evaluateDebate: (params: {
-    state: string;
-    questions: Record<string, TypeSafeQuestion>;
-    model?: string;
-  }) => Promise<{
-    answers?: Record<string, { score: number; verdict?: string }>;
-    modelUsed?: string;
-    error?: string;
-  }>;
+  evaluateDebate: (params: DebateJudgeRequest) => Promise<DebateJudgeResponse>;
 }
 
 /**
@@ -104,79 +117,117 @@ export function constructMultiPersonaQuestions(): Record<string, TypeSafeQuestio
   };
 }
 
+const PERSONAS = ["architect", "security", "performance", "ux", "devils_advocate"] as const;
+
+async function defaultDebateClient(
+  params: DebateJudgeRequest
+): Promise<DebateJudgeResponse> {
+  const apiKey = process.env.TYPESAFE_API_KEY?.trim();
+  if (!apiKey) return { error: "api_key_missing" };
+  let policyClient: {
+    resolveTrustedToolPolicy: (purpose: "debate") => unknown;
+    judgeWithPolicy: (options: {
+      args: DebateJudgeRequest;
+      trustedPolicy: unknown;
+      purpose: "debate";
+      apiKey: string;
+      fetchImpl: typeof fetch;
+    }) => Promise<
+      { ok: true; answers: Record<string, unknown>; metadata?: Record<string, unknown> }
+      | { ok: false; code: string; metadata?: Record<string, unknown> }
+    >;
+  };
+  try {
+    policyClient = createRequire(import.meta.url)("./typesafe-policy-client.cjs");
+  } catch {
+    return { error: "policy_client_missing" };
+  }
+  try {
+    if (typeof policyClient.resolveTrustedToolPolicy !== "function" || typeof policyClient.judgeWithPolicy !== "function") {
+      return { error: "policy_client_missing" };
+    }
+    const result = await policyClient.judgeWithPolicy({
+      args: params,
+      trustedPolicy: policyClient.resolveTrustedToolPolicy("debate"),
+      purpose: "debate",
+      apiKey,
+      fetchImpl: globalThis.fetch,
+    });
+    return result.ok
+      ? { answers: result.answers, metadata: result.metadata }
+      : { error: result.code, metadata: result.metadata };
+  } catch {
+    return { error: "policy_client_unavailable" };
+  }
+}
+
+/**
+ * Advisory rubric scores are not probabilities or independent votes. Preserve
+ * every existing veto: mean >= 1.5 AND architect/security/devil each >= 1.
+ * Disagreement never overrides those vetoes; incomplete output has no verdict.
+ */
 export async function runMultiPersonaDebate(
   planContent: string,
   client?: DebateJudgeClient,
   options?: { model?: string }
 ): Promise<MultiPersonaDebateResult> {
-  const targetModel = options?.model || resolveDebateModel();
-  const questions = constructMultiPersonaQuestions();
-  const state = JSON.stringify({
-    plan: planContent,
-    context: "Multi-Persona Pre-Analysis Debate (ck:predict)",
-  });
-
-  let response: {
-    answers?: Record<string, { score: number; verdict?: string }>;
-    modelUsed?: string;
-    error?: string;
+  const targetModel = options?.model?.trim() || resolveDebateModel();
+  const result: MultiPersonaDebateResult = {
+    approved: false,
+    status: "unavailable",
+    advisoryOnly: true,
+    modelTier: targetModel,
+    requestedModel: targetModel,
+    reasons: [],
+    personas: { architect: {}, security: {}, performance: {}, ux: {}, devils_advocate: {} },
   };
-
-  if (client && typeof client.evaluateDebate === "function") {
-    response = await client.evaluateDebate({
-      state,
-      questions,
-      model: targetModel,
-    });
-  } else {
-    response = {
-      modelUsed: targetModel,
-      answers: {
-        architect: { score: 3 },
-        security: { score: 3 },
-        performance: { score: 3 },
-        ux: { score: 3 },
-        devils_advocate: { score: 3 },
-      },
+  if (!planContent.trim()) {
+    return { ...result, status: "insufficient", reasons: ["Plan evidence is empty."] };
+  }
+  // Preserve all source bytes. A large plan needs phase/advisor review, not truncation.
+  if (Buffer.byteLength(planContent, "utf8") > 32_768) {
+    return { ...result, status: "insufficient", reasons: ["Plan evidence exceeds the local request budget; review explicit phases with an Advisor without dropping whole-plan obligations."] };
+  }
+  const questions = constructMultiPersonaQuestions();
+  // JSON protects the data boundary; it does not confer semantic injection immunity.
+  const state = JSON.stringify({
+    context: "Multi-Persona Pre-Analysis Debate (ck:predict)",
+    source: { plan: planContent },
+  });
+  let response: DebateJudgeResponse;
+  try {
+    response = await (client ? client.evaluateDebate({ state, questions, model: targetModel }) : defaultDebateClient({ state, questions, model: targetModel }));
+  } catch {
+    return { ...result, errorCode: "client_failed", reasons: ["TypeSafe debate unavailable: judge client failed."] };
+  }
+  if (!response || typeof response !== "object") {
+    return { ...result, errorCode: "bad_response", reasons: ["TypeSafe debate unavailable: no response."] };
+  }
+  result.metadata = response.metadata;
+  const resolvedModel = response.metadata?.resolvedModel ?? response.modelUsed;
+  if (typeof resolvedModel === "string" && resolvedModel.trim()) result.resolvedModel = resolvedModel;
+  if (response.error || !response.answers || typeof response.answers !== "object") {
+    return { ...result, errorCode: response.error ?? "bad_response", reasons: [`TypeSafe debate unavailable: ${response.error || "required persona scores are missing"}.`] };
+  }
+  for (const persona of PERSONAS) {
+    const answer = response.answers[persona];
+    if (!answer || typeof answer !== "object" || !("score" in answer)
+      || typeof answer.score !== "number" || !Number.isFinite(answer.score) || answer.score < 0 || answer.score > 3) {
+      return { ...result, errorCode: "bad_response", reasons: [`TypeSafe debate unavailable: ${persona} requires a finite rubric score in [0, 3].`] };
+    }
+    result.personas[persona] = {
+      score: answer.score,
+      ...("verdict" in answer && typeof answer.verdict === "string" ? { verdict: answer.verdict } : {}),
     };
   }
-
-  const answers = response.answers || {};
-  const architectScore = answers.architect?.score ?? 2;
-  const securityScore = answers.security?.score ?? 2;
-  const performanceScore = answers.performance?.score ?? 2;
-  const uxScore = answers.ux?.score ?? 2;
-  const devilsScore = answers.devils_advocate?.score ?? 2;
-
-  const personas = {
-    architect: { score: architectScore, verdict: answers.architect?.verdict },
-    security: { score: securityScore, verdict: answers.security?.verdict },
-    performance: { score: performanceScore, verdict: answers.performance?.verdict },
-    ux: { score: uxScore, verdict: answers.ux?.verdict },
-    devils_advocate: { score: devilsScore, verdict: answers.devils_advocate?.verdict },
-  };
-
-  const scores = [architectScore, securityScore, performanceScore, uxScore, devilsScore];
-  const consensusScore = parseFloat((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2));
-
-  const reasons: string[] = [];
-  if (consensusScore < 1.5) {
-    reasons.push(`Low consensus score (${consensusScore}/3.0) across evaluate personas`);
+  // All roles validated above; never round before the acceptance comparison.
+  const consensusScore = PERSONAS.reduce((total, persona) => total + result.personas[persona].score!, 0) / PERSONAS.length;
+  result.consensusScore = consensusScore;
+  if (consensusScore < 1.5) result.reasons.push(`Multi-persona rubric mean (${consensusScore}) is below 1.5.`);
+  for (const persona of ["architect", "security", "devils_advocate"] as const) {
+    if (result.personas[persona].score! < 1) result.reasons.push(`${persona} veto: score below 1.`);
   }
-  if (securityScore === 0) {
-    reasons.push("Security persona flagged critical flaw or credential risk");
-  }
-  if (devilsScore === 0) {
-    reasons.push("Devil's advocate flagged fatal blindspot or missing fallback");
-  }
-
-  const approved = consensusScore >= 1.5 && securityScore > 0 && devilsScore > 0;
-
-  return {
-    approved,
-    modelTier: targetModel,
-    consensusScore,
-    reasons,
-    personas,
-  };
+  result.approved = result.reasons.length === 0;
+  result.status = result.approved ? "approved" : "rejected";
+  return result;
 }

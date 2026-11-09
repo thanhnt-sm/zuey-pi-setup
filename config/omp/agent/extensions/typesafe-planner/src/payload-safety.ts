@@ -1,5 +1,4 @@
 import { createRequire } from "node:module";
-import os from "node:os";
 import path from "node:path";
 
 const nodeRequire = createRequire(import.meta.url);
@@ -7,6 +6,7 @@ const nodeRequire = createRequire(import.meta.url);
 export interface SafePayloadOptions {
   maxBytes?: number;
   apiKey?: string;
+  trustedPolicy?: TrustedToolPolicy;
 }
 
 export interface TypeSafeQuestionDefinition {
@@ -22,6 +22,103 @@ export interface TypeSafePayload {
   [key: string]: unknown;
 }
 
+export type JudgePurpose =
+  | "judge" | "rerank" | "multi" | "plan" | "debate" | "advisory"
+  | "expert" | "advisor" | "native_done" | "native_drop"
+  | "decision" | "health" | "egc" | "evaluation";
+
+export interface SemanticReviewLimits {
+  readonly maxPackets: number;
+  readonly maxDispatches: number;
+  readonly deadlineMs: number;
+  readonly maxActive: number;
+  readonly maxQueued: number;
+}
+
+export interface TrustedToolPolicy {
+  readonly maxQuestionsPerRequest: number;
+  readonly provider: { readonly allowedModels: readonly string[] };
+  readonly routing?: {
+    readonly baseline: string;
+    readonly lattice: readonly string[];
+    readonly questionKeys?: readonly string[];
+  };
+  readonly semanticReviewLimits?: Partial<SemanticReviewLimits>;
+}
+
+export type ResolvedToolPolicy =
+  | { readonly ok: false; readonly code: "policy_invalid"; readonly purpose: JudgePurpose }
+  | (TrustedToolPolicy & {
+      readonly ok: true;
+      readonly purpose: JudgePurpose;
+      readonly policyIdentity: string;
+      readonly semanticReviewLimits: SemanticReviewLimits;
+    });
+
+export interface TypeSafeAttemptReceipt {
+  readonly receiptId: string;
+  readonly provider: "typesafe";
+  readonly endpoint: "https://api.typesafe.ai/v1/systemone";
+  readonly attempt: number;
+  readonly startedAtMs: number;
+  readonly endedAtMs: number;
+  readonly clock: "monotonic_ms";
+  readonly kind: "ok" | "auth" | "http_error" | "bad_response" | "request_error";
+  readonly status: number | null;
+  readonly error: "timeout" | "cancelled" | "network_error" | null;
+  readonly bodyDigest: string;
+  readonly bodyBytes: number;
+  readonly questionIds: readonly string[] | null;
+  readonly questionCount: number | null;
+  readonly policyIdentity: string | null;
+  readonly resolvedModel: string | null;
+  readonly modelUnavailableReason: string | null;
+  readonly usage: Record<string, unknown> | null;
+  readonly usageUnavailableReason: string | null;
+  readonly billing: Record<string, unknown> | number | null;
+  readonly billingUnavailableReason: string | null;
+}
+
+export interface TypeSafeRequestMetadata {
+  readonly policyIdentity?: string;
+  readonly purpose?: JudgePurpose;
+  readonly maxQuestionsPerRequest: number;
+  readonly questionIds: readonly string[];
+  readonly questionCount: number;
+  readonly bodyBytes: number;
+  readonly bodyDigest: string;
+  readonly attempts?: number;
+  readonly attemptReceipts?: readonly TypeSafeAttemptReceipt[];
+  readonly resolvedModel?: string;
+  readonly usage?: Record<string, unknown>;
+  readonly billing?: Record<string, unknown> | number;
+  readonly cooldown?: boolean;
+  readonly cooldownUntil?: number;
+}
+
+export interface TypeSafePreparedRequest {
+  readonly ok: true;
+  readonly body: string;
+  readonly questions: Readonly<Record<string, TypeSafeQuestionDefinition>>;
+  readonly bodyBytes: number;
+  readonly bodyDigest: string;
+  readonly questionCount: number;
+  readonly policyIdentity?: string;
+  readonly metadata: TypeSafeRequestMetadata;
+}
+
+export type PreparedRequestValidationResult = { ok: true } | { ok: false; code: string };
+export type PreparedRequestValidator = (prepared: TypeSafePreparedRequest) =>
+  PreparedRequestValidationResult | Promise<PreparedRequestValidationResult>;
+export type TypeSafePreparationResult = TypeSafePreparedRequest | { ok: false; code: string };
+export type TypeSafeAnswer =
+  | { noul: number }
+  | { choice: string; confidence: number }
+  | { score: number; confidence: number };
+export type TypeSafeJudgeResult =
+  | { ok: true; answers: Record<string, TypeSafeAnswer>; metadata: TypeSafeRequestMetadata }
+  | { ok: false; code: string; authError: boolean; metadata?: TypeSafeRequestMetadata };
+
 interface RedactModule {
   preparePayload: (payload: unknown, opts?: { maxBytes?: number; apiKey?: string }) => unknown;
 }
@@ -32,32 +129,22 @@ interface RedactPatternsModule {
 
 function loadRedactModule(): RedactModule | null {
   try {
-    const modPath = path.join(
-      os.homedir(),
-      ".claude",
-      "mcp",
-      "typesafe",
-      "typesafe-redact.cjs"
-    );
-    return nodeRequire(modPath) as RedactModule;
-  } catch {
-    return null;
-  }
+    const mod = nodeRequire(path.join(__dirname, "typesafe-redact.cjs")) as RedactModule;
+    if (mod && typeof mod.preparePayload === "function") {
+      return mod;
+    }
+  } catch {}
+  return null;
 }
 
 function loadPatternsModule(): RedactPatternsModule | null {
   try {
-    const modPath = path.join(
-      os.homedir(),
-      ".claude",
-      "mcp",
-      "typesafe",
-      "typesafe-redact-patterns.cjs"
-    );
-    return nodeRequire(modPath) as RedactPatternsModule;
-  } catch {
-    return null;
-  }
+    const mod = nodeRequire(path.join(__dirname, "typesafe-redact-patterns.cjs")) as RedactPatternsModule;
+    if (mod && typeof mod.detectSecret === "function") {
+      return mod;
+    }
+  } catch {}
+  return null;
 }
 
 const ANTHROPIC_KEY_REGEX = /\bsk-ant-[A-Za-z0-9_-]{20,}\b/g;
@@ -78,16 +165,11 @@ export function redactAnthropicSecrets(text: string): string {
 /**
  * Checks if a string contains a secret pattern (Anthropic key or general credential).
  */
-export function isSecretInKey(key: string): boolean {
+export function isSecretInKey(key: string, patterns = loadPatternsModule()): boolean {
   if (ANTHROPIC_KEY_REGEX.test(key)) return true;
   if (CLAUDE_SESSION_KEY_REGEX.test(key)) return true;
   if (CLAUDE_TOKEN_REGEX.test(key)) return true;
-
-  const patterns = loadPatternsModule();
-  if (patterns && typeof patterns.detectSecret === "function") {
-    return patterns.detectSecret(key);
-  }
-  return false;
+  return patterns ? patterns.detectSecret(key) : true;
 }
 
 /**
@@ -119,8 +201,8 @@ const ERROR_KEYWORDS = [
   "TypeError:",
   "ReferenceError:",
   "stack:",
-  "at ",
 ];
+const STACK_FRAME_RE = /^\s*at\s+\S+/;
 /**
  * Structural smart truncation that prioritizes test errors and symbols
  * over repetitive diff lines while strictly satisfying the byte budget.
@@ -137,22 +219,20 @@ export function truncatePayloadState(state: string, maxBytes: number): string {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (ERROR_KEYWORDS.some((kw) => line.includes(kw))) {
+    if (ERROR_KEYWORDS.some((kw) => line.includes(kw)) || STACK_FRAME_RE.test(line)) {
       errorLines.push(line);
     } else if (
       line.startsWith("diff --git") ||
       line.startsWith("---") ||
       line.startsWith("+++") ||
       line.startsWith("Summary:") ||
-      line.startsWith("Header:") ||
-      line.startsWith("# ")
+      line.startsWith("Header:")
     ) {
       headerLines.push(line);
     } else {
       diffLines.push(line);
     }
   }
-
   const marker = "\n... [diff truncated for size budget] ...\n";
   const reservedBytes =
     Buffer.byteLength(headerLines.join("\n") + "\n" + errorLines.join("\n") + marker, "utf8");
@@ -202,132 +282,62 @@ export function truncatePayloadState(state: string, maxBytes: number): string {
   return assembled;
 }
 
-const DEFAULT_MAX_BYTES = process.env.NODE_ENV === "test" ? 32768 : 65536;
+export const DEFAULT_MAX_BYTES = 32768;
 
 /**
- * Prepares and sanitizes a payload before transmission:
- * 1. Validates round-trip question keys for secrets (rejects if present).
- * 2. Redacts all sensitive credentials (Anthropic tokens, AWS, JWT, API keys).
- * 3. Enforces hard max byte cap (<= 32,768 bytes) with priority truncation.
+ * Redaction is permitted; implicit evidence/question truncation is not.
+ * The canonical request preparer owns count, identity and final UTF-8 bounds.
  */
 export function preparePayloadSafe<T extends TypeSafePayload>(
   payload: T,
   opts?: SafePayloadOptions
 ): T {
-  const maxBytes = opts?.maxBytes ?? DEFAULT_MAX_BYTES;
-
-  // 1. Secret in key check
-  if (payload.questions && typeof payload.questions === "object") {
-    for (const key of Object.keys(payload.questions)) {
-      if (isSecretInKey(key)) {
-        throw new Error("payload rejected: secret in key");
-      }
-    }
-  }
-
-  // 2. Deep scrub Anthropic tokens
-  let scrubbed = deepScrubAnthropic(payload);
-
-  // 3. Smart structural truncation of oversized state BEFORE delegation
-  const baseJsonBytes = Buffer.byteLength(
-    JSON.stringify({ ...scrubbed, state: "" }),
-    "utf8"
-  );
-  // Reserve headroom for JSON serialization and questions
-  const stateBudget = Math.max(1024, maxBytes - baseJsonBytes - 128);
-
-  // If state is a JSON string, parse it so we can perform structural diff truncation
-  let stateParsed: Record<string, unknown> | null = null;
-  if (typeof scrubbed.state === "string") {
-    const trimmed = scrubbed.state.trim();
-    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          stateParsed = parsed as Record<string, unknown>;
-        }
-      } catch {}
-    }
-  } else if (scrubbed.state && typeof scrubbed.state === "object" && !Array.isArray(scrubbed.state)) {
-    stateParsed = { ...(scrubbed.state as Record<string, unknown>) };
-  }
-
-  if (stateParsed) {
-    const diffKey = ["unified_diff", "gitDiff", "diff"].find((k) => typeof stateParsed?.[k] === "string");
-    if (diffKey && typeof stateParsed[diffKey] === "string") {
-      let stateStr = JSON.stringify(stateParsed);
-      const targetMax = Math.min(32200, maxBytes - 256);
-      while (Buffer.byteLength(stateStr, "utf8") > targetMax && (stateParsed[diffKey] as string).length > 500) {
-        stateParsed[diffKey] = (stateParsed[diffKey] as string).slice(0, -256) + "\n[... diff truncated ...]";
-        stateStr = JSON.stringify(stateParsed);
-      }
-    }
-    scrubbed = {
-      ...scrubbed,
-      state: typeof payload.state === "string" ? JSON.stringify(stateParsed) : stateParsed,
-    };
-  } else {
-    let stateStr = "";
-    if (typeof scrubbed.state === "string") {
-      stateStr = scrubbed.state;
-    } else if (scrubbed.state !== undefined) {
-      stateStr = JSON.stringify(scrubbed.state);
-    }
-    if (Buffer.byteLength(stateStr, "utf8") > stateBudget) {
-      let currentBudget = stateBudget;
-      scrubbed = {
-        ...scrubbed,
-        state: truncatePayloadState(stateStr, currentBudget),
-      };
-      while (Buffer.byteLength(JSON.stringify(scrubbed), "utf8") > maxBytes - 256 && currentBudget > 1024) {
-        currentBudget -= 2048;
-        scrubbed = {
-          ...scrubbed,
-          state: truncatePayloadState(stateStr, Math.max(1024, currentBudget)),
-        };
-      }
-    }
-  }
-
-  // 4. Delegate to shared kit redaction module if available
+  const maxBytes = Math.min(opts?.maxBytes ?? DEFAULT_MAX_BYTES, DEFAULT_MAX_BYTES);
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new Error("policy_invalid");
   const redactMod = loadRedactModule();
-  if (redactMod && typeof redactMod.preparePayload === "function") {
-    try {
-      scrubbed = redactMod.preparePayload(scrubbed, {
-        maxBytes,
-        apiKey: opts?.apiKey,
-      }) as T;
-    } catch (err: unknown) {
-      if (err instanceof Error && err.message.includes("secret in key")) {
-        throw new Error("payload rejected: secret in key");
-      }
-      throw err;
-    }
+  const patternsMod = loadPatternsModule();
+  if (!redactMod || !patternsMod) throw new Error("payload_safety_unavailable");
+  if (!payload.questions || typeof payload.questions !== "object") {
+    const scrubbed = redactMod.preparePayload(deepScrubAnthropic(payload), {
+      maxBytes: Infinity, apiKey: opts?.apiKey,
+    }) as T;
+    if (Buffer.byteLength(JSON.stringify(scrubbed), "utf8") > maxBytes) throw new Error("payload too large");
+    return scrubbed;
+  }
+  let client: {
+    prepareRequest: (args: TypeSafePayload, limits?: TrustedToolPolicy, options?: { apiKey?: string }) => TypeSafePreparationResult;
+  };
+  try {
+    client = nodeRequire(path.join(__dirname, "typesafe-api-client.cjs"));
+    if (typeof client.prepareRequest !== "function") throw new Error("missing");
+  } catch {
+    throw new Error("payload_safety_unavailable");
+  }
+  const prepared = client.prepareRequest(deepScrubAnthropic(payload), opts?.trustedPolicy, { apiKey: opts?.apiKey });
+  if (!prepared.ok) throw new Error(prepared.code);
+  if (Buffer.byteLength(prepared.body, "utf8") > maxBytes) throw new Error("payload too large");
+  return JSON.parse(prepared.body) as T;
+}
+
+/**
+ * Clamps text to maxChars, inserting a truncation marker at the cut point.
+ */
+export function clampText(text: string, maxChars: number, keep: "head" | "tail"): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  const markerTemplate = "\n[... 00000 chars truncated ...]\n";
+  const overhead = markerTemplate.length;
+  if (maxChars <= overhead) {
+    return keep === "head" ? text.slice(0, maxChars) : text.slice(-maxChars);
   }
 
-  // 5. Final bounding guarantee
-  let bodyStr = JSON.stringify(scrubbed);
-  if (Buffer.byteLength(bodyStr, "utf8") > maxBytes) {
-    const budget = Math.max(
-      256,
-      maxBytes - Buffer.byteLength(JSON.stringify({ ...scrubbed, state: "" }), "utf8") - 32
-    );
-    const currState = typeof scrubbed.state === "string" ? scrubbed.state : JSON.stringify(scrubbed.state);
-    
-    // Structural JSON trimming: avoid severing byte streams and prevent 422 from broken JSON parsers
-    let charBudget = budget;
-    while (Buffer.byteLength(currState.substring(0, charBudget), "utf8") > budget) {
-      charBudget--;
-    }
-    let forcedTrunc = currState.substring(0, charBudget);
-    if (typeof scrubbed.state !== "string" || forcedTrunc.startsWith("{") || forcedTrunc.startsWith("[")) {
-      forcedTrunc = "--- Truncated State ---\n" + forcedTrunc;
-    }
-    
-    scrubbed = {
-      ...scrubbed,
-      state: forcedTrunc,
-    };
+  const budget = maxChars - overhead;
+  const cutCount = text.length - budget;
+  const marker = `\n[... ${cutCount} chars truncated ...]\n`;
+
+  if (keep === "head") {
+    return text.slice(0, budget) + marker;
   }
-  return scrubbed;
+  return marker + text.slice(-budget);
 }

@@ -17,3 +17,7 @@ providers:
     api: openai-completions
     discovery:
       type: "openai-models-list"
+  anthropic:
+    apiKey: !printenv ANTHROPIC_API_KEY
+
+
