@@ -13,6 +13,7 @@ Fixes & enhancements over draft:
 from __future__ import annotations
 
 import datetime as dt
+import shutil
 import json
 import re
 import subprocess
@@ -469,11 +470,18 @@ def extract_sprint_from_schedule(
 
 
 def export_mpp_via_windows_com(mpp_path: Union[str, Path], xml_out_path: Union[str, Path]) -> Dict[str, Any]:
-    if sys.platform != "win32":
-        raise RuntimeError("Binary .mpp COM automation is Windows-only. Export .xml on MS Project or edit XML directly on macOS.")
     mpp, xml_out = Path(mpp_path).resolve(), Path(xml_out_path).resolve()
     if not mpp.is_file():
         raise FileNotFoundError(f".mpp file not found: {mpp}")
+    if sys.platform != "win32":
+        mpxj_bin = shutil.which("mpxj")
+        if mpxj_bin:
+            xml_out.parent.mkdir(parents=True, exist_ok=True)
+            res = subprocess.run([mpxj_bin, str(mpp), str(xml_out)], capture_output=True, text=True, check=False)
+            if res.returncode != 0:
+                raise RuntimeError(f"mpxj CLI conversion failed: {res.stderr.strip() or res.stdout.strip()}")
+            return {"mpp_path": str(mpp), "xml_out": str(xml_out), "status": "exported_mpxj"}
+        raise RuntimeError("Binary .mpp COM automation is Windows-only; install mpxj CLI on macOS/Linux or export .xml from MS Project.")
     xml_out.parent.mkdir(parents=True, exist_ok=True)
     ps_script = (
         "$ErrorActionPreference = 'Stop'; $app = $null; "

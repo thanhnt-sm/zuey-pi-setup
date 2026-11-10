@@ -245,6 +245,32 @@ class TestPmoSuiteV2(unittest.TestCase):
             empty_xlsx = tdir / "empty.xlsx"
             empty_xlsx.write_bytes(b"")
             self.assertEqual(safe_load_workbook(empty_xlsx)["error_category"], "ZERO_BYTE_FILE")
+    def test_mpp2xml_non_windows_mpxj_and_guidance(self) -> None:
+        from unittest import mock
+        from project_sync import export_mpp_via_windows_com
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tdir = Path(tmp)
+            mpp = tdir / "plan.mpp"
+            mpp.write_bytes(b"fake-mpp")
+            xml_out = tdir / "plan.xml"
+
+            with mock.patch("project_sync.sys.platform", "darwin"), \
+                 mock.patch("project_sync.shutil.which", return_value=None):
+                with self.assertRaises(RuntimeError) as ctx:
+                    export_mpp_via_windows_com(mpp, xml_out)
+                self.assertIn("mpxj", str(ctx.exception).lower())
+
+            def _fake_mpxj(cmd, **_kw):
+                Path(cmd[2]).write_text(SAMPLE_MSP_XML, encoding="utf-8")
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            with mock.patch("project_sync.sys.platform", "darwin"), \
+                 mock.patch("project_sync.shutil.which", return_value="/usr/local/bin/mpxj"), \
+                 mock.patch("project_sync.subprocess.run", side_effect=_fake_mpxj):
+                res = export_mpp_via_windows_com(mpp, xml_out)
+                self.assertEqual(res["status"], "exported_mpxj")
+                self.assertTrue(xml_out.is_file())
 
     def test_cli_json_and_interactive_exit(self) -> None:
         cli = SCRIPTS_DIR / "pmo_cli.py"

@@ -42,7 +42,7 @@ python3 scripts/pmo_cli.py --cmd note-roll --input notes_current.pmn --tracker R
 python3 scripts/pmo_cli.py --cmd note-archive --tracker RAID_tracker.xlsx --output archive/inbox_closed.csv --json
 
 # MS Project XML <-> Excel 2-Way Sync, Plan Builder & Sprint Extractor
-python3 scripts/pmo_cli.py --cmd msp2xlsx --input plan.xml --output schedule.xlsx [--profile profile.json] [--use-com] --json
+python3 scripts/pmo_cli.py --cmd mpp2xml --input plan.mpp --output plan.xml --json  # Windows COM or macOS/Linux mpxj CLI
 python3 scripts/pmo_cli.py --cmd xlsx2msp --input schedule.xlsx --base-xml plan.xml --output plan_merged.xml --policy Project --json
 python3 scripts/pmo_cli.py --cmd excel2xml --input schedule.xlsx --output new_plan.xml [--profile profile.json] --json
 python3 scripts/pmo_cli.py --cmd sprint-export --input plan.xml --start 2026-11-01 --end 2026-11-15 --output sprint.xlsx --json

@@ -212,8 +212,24 @@ TARGET_HOME_NAT="$(native_path "$USER_HOME")"
 TARGET_NODE="node"
 if [ "$OS_NAME" != "Darwin" ] && [ -x "$USER_HOME/.claude/runtime/node/node.exe" ]; then
 	TARGET_NODE="$TARGET_HOME_NAT/.claude/runtime/node/node.exe"
-elif [ "$OS_NAME" = "Darwin" ]; then
-	for cand in /opt/homebrew/bin/node /usr/local/bin/node "$(command -v node 2>/dev/null || true)"; do
+elif [ "$OS_NAME" = "Darwin" ] || [ "$OS_NAME" = "Linux" ]; then
+	NODE_CANDS=(
+		"/opt/homebrew/bin/node"
+		"/usr/local/bin/node"
+		"$USER_HOME/.volta/bin/node"
+		"$HOME/.volta/bin/node"
+	)
+	for glob_dir in \
+		"$USER_HOME/.nvm/versions/node"/*/bin/node \
+		"$HOME/.nvm/versions/node"/*/bin/node \
+		"$USER_HOME/.fnm/node-versions"/*/installation/bin/node \
+		"$HOME/.fnm/node-versions"/*/installation/bin/node \
+		"$USER_HOME/.local/share/mise/installs/node"/*/bin/node \
+		"$HOME/.local/share/mise/installs/node"/*/bin/node; do
+		[ -e "$glob_dir" ] && NODE_CANDS+=("$glob_dir")
+	done
+	NODE_CANDS+=("$(command -v node 2>/dev/null || true)")
+	for cand in "${NODE_CANDS[@]}"; do
 		if [ -n "$cand" ] && [ -x "$cand" ]; then
 			TARGET_NODE="$cand"
 			break

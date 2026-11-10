@@ -591,11 +591,23 @@ def to_md(input_path: Union[str, Path], output_md: Optional[Union[str, Path]] = 
         lines.extend([f"- **Subject:** {msg.get('Subject', '')}", f"- **From:** {msg.get('From', '')}", f"- **Date:** {msg.get('Date', '')}", ""])
         body = msg.get_payload(decode=True) if not msg.is_multipart() else next((p.get_payload(decode=True) for p in msg.walk() if p.get_content_type() == "text/plain"), b"")
         lines.append((body or b"").decode("utf-8", errors="ignore"))
-    elif ext == ".pdf" and shutil.which("pdftotext"):
-        lines.append(subprocess.check_output(["pdftotext", "-layout", str(src), "-"], text=True, errors="ignore"))
+    elif ext == ".pdf":
+        extracted = ""
+        try:
+            from pypdf import PdfReader  # type: ignore
+
+            reader = PdfReader(str(src))
+            page_chunks = [(pg.extract_text() or "").strip() for pg in reader.pages]
+            extracted = "\n\n".join(c for c in page_chunks if c).strip()
+        except ImportError:
+            extracted = ""
+        if not extracted and shutil.which("pdftotext"):
+            extracted = subprocess.check_output(["pdftotext", "-layout", str(src), "-"], text=True, errors="ignore").strip()
+        if not extracted:
+            raise ValueError(f"Scanned/image-only PDF has no extractable text (use OCR or ai-multimodal): {src}")
+        lines.append(extracted)
     else:
         raise ValueError(f"Unsupported format for pure-Python to_md: {ext}")
-
     md = "\n".join(lines).rstrip() + "\n"
     if output_md:
         Path(output_md).parent.mkdir(parents=True, exist_ok=True)

@@ -20,7 +20,9 @@ echo '{"name":"omp-plugins","private":true,"dependencies":{}}' > "$MOCK_OMP/plug
 # Use a pure-stdlib-friendly empty or lightweight requirement for fast offline-safe mock check when stubbing uv/pip
 cat <<'EOF' > "$MOCK_OMP/agent/tools-requirements.txt"
 openpyxl>=3.1.2
+pypdf>=4.0.0
 EOF
+grep -q "^pypdf>=" "$ROOT/config/omp/agent/tools-requirements.txt" || { echo "FAIL: repo tools-requirements.txt missing pypdf"; exit 1; }
 
 TAR_OUT="$TEST_TMP/pkg.tar.gz"
 "$BASH" "$BACKUP_SCRIPT" --source "$MOCK_OMP" -o "$TAR_OUT" --no-upstream

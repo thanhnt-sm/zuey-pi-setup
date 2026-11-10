@@ -206,6 +206,62 @@ class TestOfficeSuiteV2(unittest.TestCase):
             self.assertEqual(m["signals"]["dev_tq_below_1"]["value"], 1)
             self.assertTrue(m["emergency_mode"])
 
+    @staticmethod
+    def _build_synthetic_pdf(page_texts: list[str]) -> bytes:
+        objs: list[bytes] = []
+        # Obj 1: Catalog, Obj 2: Pages
+        page_count = max(1, len(page_texts))
+        kids = " ".join(f"{3 + i * 2} 0 R" for i in range(page_count))
+        objs.append(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+        objs.append(f"2 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {page_count} >>\nendobj\n".encode("ascii"))
+        font_obj_num = 3 + page_count * 2
+        for i in range(page_count):
+            txt = page_texts[i] if i < len(page_texts) else ""
+            p_num = 3 + i * 2
+            c_num = p_num + 1
+            escaped = txt.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+            stream = f"BT /F1 12 Tf 72 720 Td ({escaped}) Tj ET\n".encode("ascii") if txt else b""
+            objs.append(
+                f"{p_num} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                f"/Contents {c_num} 0 R /Resources << /Font << /F1 {font_obj_num} 0 R >> >> >>\nendobj\n".encode("ascii")
+            )
+            objs.append(
+                f"{c_num} 0 obj\n<< /Length {len(stream)} >>\nstream\n".encode("ascii")
+                + stream
+                + b"endstream\nendobj\n"
+            )
+        objs.append(f"{font_obj_num} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n".encode("ascii"))
+        buf = bytearray(b"%PDF-1.4\n")
+        offsets = [0]
+        for obj in objs:
+            offsets.append(len(buf))
+            buf.extend(obj)
+        xref_pos = len(buf)
+        buf.extend(f"xref\n0 {len(offsets)}\n0000000000 65535 f \n".encode("ascii"))
+        for off in offsets[1:]:
+            buf.extend(f"{off:010d} 00000 n \n".encode("ascii"))
+        buf.extend(f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n".encode("ascii"))
+        return bytes(buf)
+
+    def test_pure_python_pdf_to_md_without_pdftotext(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tdir = Path(tmp)
+            pdf_ok = tdir / "multi.pdf"
+            pdf_ok.write_bytes(self._build_synthetic_pdf(["Hello Pure Python PDF Page 1", "Second Page Content"]))
+            with mock.patch("doc_converter.shutil.which", return_value=None):
+                res = to_md(pdf_ok)
+            self.assertIn("Hello Pure Python PDF Page 1", res["markdown"])
+            self.assertIn("Second Page Content", res["markdown"])
+
+            pdf_blank = tdir / "scanned.pdf"
+            pdf_blank.write_bytes(self._build_synthetic_pdf([]))
+            with mock.patch("doc_converter.shutil.which", return_value=None):
+                with self.assertRaises(ValueError) as ctx:
+                    to_md(pdf_blank)
+                self.assertIn("Scanned/image-only", str(ctx.exception))
+
     def test_dual_mode_cli(self) -> None:
         cli = SCRIPTS_DIR / "office_cli.py"
         with tempfile.TemporaryDirectory() as tmp:

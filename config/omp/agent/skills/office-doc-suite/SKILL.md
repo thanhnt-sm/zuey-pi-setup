@@ -5,7 +5,7 @@ description: "Cross-platform pure-Python suite for Markdown <-> Word (.docx), mu
 
 # Office Document Suite (OMP Native Priority-100)
 
-Cross-platform (Windows, macOS, Linux) pure-Python document & analytics suite powered by `~/.omp/tools-venv` (`python-docx`, `openpyxl`, `defusedxml`, `markdown`, `extract-msg`). Zero MS Office or Chromium dependency.
+Cross-platform (Windows, macOS, Linux) pure-Python document & analytics suite powered by `~/.omp/tools-venv` (`python-docx`, `openpyxl`, `defusedxml`, `markdown`, `extract-msg`, `pypdf`). Zero MS Office, Poppler, or Chromium dependency.
 
 ## Dual-Mode CLI Usage (`scripts/office_cli.py`)
 

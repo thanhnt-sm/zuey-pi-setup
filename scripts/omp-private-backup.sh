@@ -3,13 +3,13 @@
 # omp-private-backup.sh — Encrypted backup of private omp & claude state (NEVER commit the output)
 #
 # Opt-in items:
-#   --memory        ~/.omp/agent/memories/mnemopi/banks/*/mnemopi.db   (long-term memory, per workspace)
-#   --history       ~/.omp/agent/history.db                            (prompt history, session titles/recaps)
-#   --typesafe-kit  ~/.claude/mcp/typesafe/, ~/.claude/hooks/lib/typesafe-enabled-resolver.cjs, ~/.claude/.ck.json
-#   --claude        Full portable ~/.claude/ ecosystem (skills, agents, hooks, workflows, rules, settings, .ck.json,
-#                   and ~/.claude.json mcpServers) with Windows paths templated ({{CLAUDE_NODE}}, {{USER_HOME}})
-#                   for cross-OS Windows <-> macOS portability. Excludes runtime/, .logs/, cache/, .venv/, .credentials.json.
-#   --all           All of the above (--memory --history --typesafe-kit --claude)
+#   --memory                 ~/.omp/agent/memories/mnemopi/banks/*/mnemopi.db (skips ephemeral scratch banks unless --include-scratch-banks)
+#   --include-scratch-banks  Include scratch/smoke test mnemopi banks when running --memory
+#   --history                ~/.omp/agent/history.db (prompt history, session titles/recaps)
+#   --sessions               ~/.omp/agent/sessions/*.jsonl + ~/.claude/projects/**/*.jsonl + memory/ (opt-in, excluded from --all)
+#   --typesafe-kit           ~/.claude/mcp/typesafe/, ~/.claude/hooks/lib/typesafe-enabled-resolver.cjs, ~/.claude/.ck.json
+#   --claude                 Full portable ~/.claude/ ecosystem with {{CLAUDE_NODE}} / {{USER_HOME}} templating
+#   --all                    All core private state (--memory --history --typesafe-kit --claude; does not include --sessions)
 #
 set -euo pipefail
 
@@ -22,6 +22,8 @@ WANT_MEMORY=0
 WANT_HISTORY=0
 WANT_KIT=0
 WANT_CLAUDE=0
+WANT_SESSIONS=0
+INCLUDE_SCRATCH=0
 
 usage() {
 	sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
@@ -30,7 +32,9 @@ usage() {
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--memory) WANT_MEMORY=1; shift ;;
+		--include-scratch-banks) INCLUDE_SCRATCH=1; shift ;;
 		--history) WANT_HISTORY=1; shift ;;
+		--sessions) WANT_SESSIONS=1; shift ;;
 		--typesafe-kit) WANT_KIT=1; shift ;;
 		--claude) WANT_CLAUDE=1; shift ;;
 		--all) WANT_MEMORY=1; WANT_HISTORY=1; WANT_KIT=1; WANT_CLAUDE=1; shift ;;
@@ -43,8 +47,8 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-if [ "$WANT_MEMORY$WANT_HISTORY$WANT_KIT$WANT_CLAUDE" = "0000" ]; then
-	echo "Error: nothing selected. Use --memory, --history, --typesafe-kit, --claude or --all." >&2
+if [ "$WANT_MEMORY$WANT_HISTORY$WANT_KIT$WANT_CLAUDE$WANT_SESSIONS" = "00000" ]; then
+	echo "Error: nothing selected. Use --memory, --history, --sessions, --typesafe-kit, --claude or --all." >&2
 	exit 1
 fi
 
@@ -180,23 +184,87 @@ STAGE_DIR="$(mktemp -d -t omp-private-XXXXXX)"
 trap 'rm -rf "$STAGE_DIR"' EXIT
 COUNT=0
 
+is_scratch_mnemopi_bank() {
+	case "$1" in
+		omp-verify-*|scratch-*|ck-smoke-*|broken-*|demo-*) return 0 ;;
+	esac
+	printf '%s' "$1" | grep -qE '^[abc]-[a-z0-9]{6,}$'
+}
+
 if [ "$WANT_MEMORY" -eq 1 ]; then
 	BANKS="$OMP_SRC/agent/memories/mnemopi/banks"
 	if [ -d "$BANKS" ]; then
 		mem_count=0
+		mem_skipped=0
 		for db in "$BANKS"/*/mnemopi.db; do
 			[ -f "$db" ] || continue
 			bank="$(basename "$(dirname "$db")")"
+			if [ "$INCLUDE_SCRATCH" -eq 0 ] && is_scratch_mnemopi_bank "$bank"; then
+				mem_skipped=$((mem_skipped + 1))
+				continue
+			fi
 			snapshot_db "$db" "$STAGE_DIR/.omp/agent/memories/mnemopi/banks/$bank/mnemopi.db"
 			mem_count=$((mem_count + 1))
 			COUNT=$((COUNT + 1))
 		done
-		echo "-> memory: $mem_count mnemopi bank(s)"
+		echo "-> memory: $mem_count mnemopi bank(s) ($mem_skipped scratch bank(s) skipped)"
 	else
 		echo "Warning: --memory: $BANKS not found." >&2
 	fi
 fi
 
+if [ "$WANT_SESSIONS" -eq 1 ]; then
+	PY_STAGE=""
+	for _py in python3 python; do
+		if command -v "$_py" >/dev/null 2>&1 && "$_py" -c "import sys" >/dev/null 2>&1; then
+			PY_STAGE="$_py"
+			break
+		fi
+	done
+	if [ -n "$PY_STAGE" ]; then
+		sess_copied="$("$PY_STAGE" - "$(native_path "$OMP_SRC/agent/sessions")" "$(native_path "$USER_HOME/.claude")" "$(native_path "$STAGE_DIR")" <<'PY'
+import os, pathlib, shutil, sys, time
+omp_sess, claude_dir, stage = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+copied = 0
+def copy_retry(src: pathlib.Path, dst: pathlib.Path) -> bool:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    for attempt in range(3):
+        try:
+            shutil.copy2(src, dst)
+            return True
+        except (PermissionError, FileNotFoundError, OSError) as exc:
+            if attempt < 2:
+                time.sleep(0.05)
+            else:
+                print(f"Warning: skipped locked/vanished session file {src}: {exc}", file=sys.stderr)
+    return False
+if omp_sess.is_dir():
+    for p in omp_sess.rglob("*.jsonl"):
+        if p.is_file() and copy_retry(p, stage / ".omp" / "agent" / "sessions" / p.relative_to(omp_sess)):
+            copied += 1
+claude_proj = claude_dir / "projects"
+if claude_proj.is_dir():
+    for p in claude_proj.rglob("*"):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(claude_proj)
+        if p.suffix.lower() == ".jsonl" or "memory" in rel.parts[:-1]:
+            if copy_retry(p, stage / ".claude" / "projects" / rel):
+                copied += 1
+hist = claude_dir / "history.jsonl"
+if hist.is_file() and copy_retry(hist, stage / ".claude" / "history.jsonl"):
+    copied += 1
+print(copied)
+PY
+)"
+		if [ "${sess_copied:-0}" -gt 0 ]; then
+			COUNT=$((COUNT + 1))
+		fi
+		echo "-> sessions: $sess_copied transcript/memory file(s) staged"
+	else
+		echo "Warning: python not found; skipping --sessions staging." >&2
+	fi
+fi
 if [ "$WANT_HISTORY" -eq 1 ]; then
 	if [ -f "$OMP_SRC/agent/history.db" ]; then
 		snapshot_db "$OMP_SRC/agent/history.db" "$STAGE_DIR/.omp/agent/history.db"

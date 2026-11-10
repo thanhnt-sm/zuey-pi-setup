@@ -170,4 +170,56 @@ shim_run Darwin "$PIN_DIR" "$TEST_TMP/gh_mac_pin" "$H"
   && grep -qx 'pinentry-program /custom/pinentry' "$TEST_TMP/gh_mac_pin/gpg-agent.conf" || fail "existing pinentry-program was overwritten"
 echo "✓ PASS: GPG_TTY bound; pinentry-mac vs loopback chosen correctly; user config preserved."
 
+echo "=== [TDD] Phase 4: mnemopi scratch filter, --sessions staging & Darwin nvm node probe ==="
+P4_HOME="$TEST_TMP/p4_src_home"
+P4_OMP="$P4_HOME/.omp"
+mkdir -p "$P4_OMP/agent/memories/mnemopi/banks/real-workspace" \
+         "$P4_OMP/agent/memories/mnemopi/banks/omp-verify-workspace-123" \
+         "$P4_OMP/agent/memories/mnemopi/banks/scratch-cwd-9" \
+         "$P4_OMP/agent/memories/mnemopi/banks/a-deadbeef" \
+         "$P4_OMP/agent/sessions/ws1" \
+         "$P4_HOME/.claude/projects/proj1/memory" \
+         "$P4_HOME/.claude"
+P4_WIN_HOME="$P4_HOME"
+if command -v cygpath >/dev/null 2>&1; then
+  P4_WIN_HOME="$(cygpath -m "$P4_HOME")"
+fi
+for b in real-workspace omp-verify-workspace-123 scratch-cwd-9 a-deadbeef; do
+  python -c "import sqlite3; c=sqlite3.connect('$P4_WIN_HOME/.omp/agent/memories/mnemopi/banks/$b/mnemopi.db'); c.execute('CREATE TABLE IF NOT EXISTS k(v TEXT)'); c.commit(); c.close()"
+done
+echo '{"type":"session"}' > "$P4_OMP/agent/sessions/ws1/s1.jsonl"
+touch "$P4_OMP/agent/sessions/ws1/s1.lock"
+echo '{"type":"assistant"}' > "$P4_HOME/.claude/projects/proj1/c1.jsonl"
+echo '# Mem' > "$P4_HOME/.claude/projects/proj1/memory/MEMORY.md"
+echo '{"display":"hi"}' > "$P4_HOME/.claude/history.jsonl"
+
+P4_ARC="$TEST_TMP/p4-mem-sessions.tar.gz"
+"$BASH" "$ROOT/scripts/omp-private-backup.sh" --source "$P4_OMP" --home "$P4_HOME" --memory --sessions --no-encrypt -o "$P4_ARC"
+P4_LIST="$(tar -tzf "$(cygpath -u "$P4_ARC" 2>/dev/null || echo "$P4_ARC")")"
+echo "$P4_LIST" | grep -q "real-workspace/mnemopi.db" || fail "real-workspace bank missing"
+! echo "$P4_LIST" | grep -qE "omp-verify-workspace|scratch-cwd|a-deadbeef" || fail "scratch mnemopi banks leaked into default --memory backup"
+echo "$P4_LIST" | grep -q ".omp/agent/sessions/ws1/s1.jsonl" || fail "OMP session missing from --sessions backup"
+echo "$P4_LIST" | grep -q ".claude/projects/proj1/c1.jsonl" || fail "Claude session missing from --sessions backup"
+echo "$P4_LIST" | grep -q ".claude/projects/proj1/memory/MEMORY.md" || fail "Claude memory missing from --sessions backup"
+! echo "$P4_LIST" | grep -q "\.lock" || fail ".lock file leaked into --sessions backup"
+
+# --include-scratch-banks restores scratch banks
+P4_ARC_INC="$TEST_TMP/p4-mem-inc.tar.gz"
+"$BASH" "$ROOT/scripts/omp-private-backup.sh" --source "$P4_OMP" --home "$P4_HOME" --memory --include-scratch-banks --no-encrypt -o "$P4_ARC_INC"
+P4_INC_LIST="$(tar -tzf "$(cygpath -u "$P4_ARC_INC" 2>/dev/null || echo "$P4_ARC_INC")")"
+echo "$P4_INC_LIST" | grep -q "omp-verify-workspace-123" || fail "--include-scratch-banks omitted scratch bank"
+
+# Darwin nvm node probe when Homebrew/PATH node absent
+P4_RESTORE="$TEST_TMP/p4_restore_darwin"
+mkdir -p "$P4_RESTORE/.nvm/versions/node/v22.11.0/bin" "$P4_HOME/.claude"
+printf '#!/bin/sh\necho node\n' > "$P4_RESTORE/.nvm/versions/node/v22.11.0/bin/node"
+chmod +x "$P4_RESTORE/.nvm/versions/node/v22.11.0/bin/node"
+echo '{"hooks":{"PreToolUse":[{"command":"{{CLAUDE_NODE}} {{USER_HOME}}/.claude/hooks/x.cjs"}]}}' > "$P4_HOME/.claude/settings.json"
+P4_CLAUDE_ARC="$TEST_TMP/p4-claude.tar.gz"
+"$BASH" "$ROOT/scripts/omp-private-backup.sh" --source "$P4_OMP" --home "$P4_HOME" --claude --no-encrypt -o "$P4_CLAUDE_ARC"
+# Isolate PATH without homebrew/local node to exercise nvm probe (nvm precedes command -v node)
+OS_OVERRIDE="Darwin" "$BASH" "$RESTORE_SCRIPT" --home "$P4_RESTORE" "$P4_CLAUDE_ARC"
+grep -qE "\.nvm/versions/node/v22\.11\.0/bin/node" "$P4_RESTORE/.claude/settings.json" || fail "Darwin nvm node probe failed: $(cat "$P4_RESTORE/.claude/settings.json")"
+echo "✓ PASS: Phase 4 scratch bank filter, --sessions staging & Darwin nvm node probe passed."
+
 echo "=== ALL TDD TESTS PASSED ==="
