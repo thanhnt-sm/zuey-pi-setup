@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "generatedAt": "2026-11-10T08:05:00.000Z",
+  "planPath": "plans/261110-omp-session-tool-consolidation/plan.md",
+  "status": "HARVESTED",
+  "summary": {
+    "totalSessionsScouted": 147,
+    "totalWorkspacesScouted": 14,
+    "targetSuites": 5,
+    "currentActivePhase": 1,
+    "harvestedArtifactsCount": 234,
+    "uniqueCodeClusters": 233,
+    "lastHarvestTimestamp": "2026-11-10T02:19:38.253518+00:00"
+  },
+  "suites": {
+    "pmo_project_suite": {
+      "targetPath": "config/omp/agent/managed-skills/pmo-project-suite",
+      "status": "HARVESTED",
+      "sources": [
+        "<local-workspace>/pmi-pmo-framework",
+        "<local-workspace>/note-daily-tracker",
+        "<local-workspace>/project-excel-sync-toolkit"
+      ],
+      "capabilities": [
+        "WBS / CPM / EVM / PERT schedule calculation (pure Python)",
+        "Daily Note RAID CI/CD tracker and markdown report generator (pmo.py)",
+        "MS Project (.mpp/.xml) and Excel (.xlsx) 2-way sync with dual-mode CLI"
+      ],
+      "crossOsStrategy": "Python 3 + openpyxl + defusedxml for Windows & macOS; Windows COM fallback",
+      "harvestedCount": 63
+    },
+    "office_doc_suite": {
+      "targetPath": "config/omp/agent/managed-skills/office-doc-suite",
+      "status": "HARVESTED",
+      "sources": [
+        "<local-workspace>/document-analysis-suite",
+        "<local-workspace>/schedule-cpm-analysis",
+        "<local-workspace>/spatial-file-processing",
+        "~/.claude/skills/md-convert"
+      ],
+      "capabilities": [
+        "Markdown to Word (.docx) with embedded Mermaid diagrams",
+        "Word (.docx) to Markdown conversion with table fidelity",
+        "Spatial unstructured table & receipt extraction to Excel/MD",
+        "Weekly KPI calculation and reporting engine"
+      ],
+      "crossOsStrategy": "Python 3 + python-docx + openpyxl + markdown; headless SVG/Mermaid rendering",
+      "harvestedCount": 20
+    },
+    "email_intelligence_suite": {
+      "targetPath": "config/omp/agent/managed-skills/email-intelligence-suite",
+      "status": "HARVESTED",
+      "sources": [
+        "<local-workspace>/email-export-tools"
+      ],
+      "capabilities": [
+        "Multi-thread .eml / .msg / Outlook message parsing",
+        "SHA-256 deduplication and conversation clustering",
+        "Automatic Issue extraction into Markdown and Excel tables",
+        "Dual-mode interactive menu + non-interactive agent CLI"
+      ],
+      "crossOsStrategy": "Python standard email library + extract-msg (Windows + macOS); PowerShell Outlook COM optional",
+      "harvestedCount": 31
+    },
+    "system_maintenance_suite": {
+      "targetPath": "config/omp/agent/managed-skills/system-maintenance-suite",
+      "status": "HARVESTED",
+      "sources": [
+        "<local-workspace>/system-clean-pc",
+        "~/.omp/agent/managed-skills/windows-cleanup-pipeline",
+        "~/.omp/agent/managed-skills/wiztree-cli-analyzer",
+        "~/.omp/agent/managed-skills/ai-tool-uninstaller-builder"
+      ],
+      "capabilities": [
+        "13 Windows cleanup modules (Ollama, dev caches, editors, browser temp)",
+        "13 macOS cleanup modules (.sh equivalents in CleanPC/02_MacOS)",
+        "WizTree MFT analyzer integration on Windows",
+        "Safe dry-run inspection mode and AI tool uninstaller script builder"
+      ],
+      "crossOsStrategy": "OS-detecting runner executing .ps1 on Windows and .sh on macOS",
+      "harvestedCount": 24
+    },
+    "omp_session_harvester": {
+      "targetPath": "config/omp/agent/managed-skills/omp-session-harvester",
+      "status": "DISCOVERED",
+      "sources": [
+        "~/.omp/agent/sessions/*.jsonl",
+        "~/.omp/agent/history.db",
+        "plans/omp-consolidation-ledger.json"
+      ],
+      "capabilities": [
+        "Automated scanner for new OMP session JSONL transcripts",
+        "Code block / tool invocation extractor",
+        "Sensitive internal project keyword detector and path generalizer",
+        "Continuous ledger update and candidate skill promoter"
+      ],
+      "crossOsStrategy": "Pure Node.js / Python CLI reading JSONL transcripts and SQLite history"
+    }
+  },
+  "backupParityGaps": {
+    "userAgents": {
+      "source": "C:/Users/thant/.omp/agent/agents",
+      "status": "PENDING_PHASE_1",
+      "files": [
+        "advisor.md",
+        "ck-advisor.md",
+        "pmo-ba.md",
+        "pmo-planner.md",
+        "pmo-red-team.md",
+        "pmo-reporter.md"
+      ]
+    },
+    "claudeEcosystemPrivate": {
+      "source": "C:/Users/thant/.claude",
+      "status": "PENDING_PHASE_1",
+      "subdirs": [
+        "skills",
+        "agents",
+        "hooks",
+        "workflows",
+        "settings.json",
+        ".ck.json"
+      ]
+    },
+    "toolVenvHydration": {
+      "target": "~/.omp/tools-venv",
+      "manifest": "config/omp/agent/tools-requirements.txt",
+      "status": "PENDING_PHASE_1"
+    }
+  },
+  "topDuplicateClusters": [
+    {
+      "hash": "699de6b90345",
+      "suite": "pmo_project_suite",
+      "occurrences": 2,
+      "targets": [
+        "~/AppData/Local/omp/pm-calc",
+        "~/AppData/Local/omp/pmi-calc"
+      ]
+    }
+  ]
+}
