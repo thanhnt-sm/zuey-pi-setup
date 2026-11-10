@@ -22,8 +22,11 @@ screenshots/originals/
 *.db-wal
 *.bak*
 node_modules/
+__pycache__/
+*.pyc
 /omp-setup-portable.tar.gz
 /omp-setup-portable.tar.gz.tmp.*
+plans/reports/typesafe-recovery/
 
 # Backup riêng tư của omp (memory/history/kit) — không bao giờ track
 *.gpg
