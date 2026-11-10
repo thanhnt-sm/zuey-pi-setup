@@ -18,16 +18,17 @@ zuey-pi-setup/
 │   │   │   ├── models.yml              # apiKey literal → !printenv <PROVIDER>_API_KEY (mỗi provider 1 biến)
 │   │   │   ├── .env.example            # Tên biến môi trường (không có giá trị)
 │   │   │   ├── commandcode-models.json
-│   │   │   ├── extensions/             # Extension tự viết; shim dereference đệ quy (bao gồm src/ + tools/)
-│   │   │   ├── skills/                 # OMP-native Priority-100 skills (pmo-project-suite, office-doc-suite, email-intelligence-suite, system-maintenance-suite, omp-session-harvester, Tier A)
+│   │   │   ├── extensions/             # Extension tự viết; shim deref đệ quy + omp-toolkit-hub.ts (/harvest-loop)
+│   │   │   ├── skills/                 # OMP-native Priority-100 skills (4 domain suites + standalone omp-session-harvester + Tier A)
 │   │   │   ├── skills-optin/           # Tier B opt-in skills (hide: true, không làm phình prompt)
-│   │   │   ├── agents/                 # Agents (advisor, ck-advisor, pmo-*, hlk-*)
-│   │   │   ├── commands/               # Slash commands (pmo-delivery, pm-email, hlk-*)
-│   │   │   ├── rules/                  # Rulebook rules (team-coordination-rules, pm-ba-workflow, file-type-enforcement)
-│   │   │   ├── tools-requirements.txt  # Python dependencies cho ~/.omp/tools-venv
+│   │   │   ├── agents/                 # Agents (advisor, ck-advisor, pmo-*, hlk-*, + 18 core Claude agents ported sang OMP)
+│   │   │   ├── commands/               # Slash commands (pmo-delivery, pm-email, hlk-*, ck-council/parallel/red-team/scout-fanout)
+│   │   │   ├── rules/                  # Rules (team-coordination-rules, pm-ba-workflow, pm-ba-prewrite-guards, + 6 core Claude rules)
+│   │   │   ├── tools-requirements.txt  # Python dependencies cho ~/.omp/tools-venv (openpyxl, python-docx, defusedxml, extract-msg, markdown, pypdf)
 │   │   │   └── managed-skills/         # Autolearn skills
 │   │   └── plugins/
-│   │       └── package.json            # Plugin đang cài trên máy thật (không ship lockfile chéo OS)
+│   │       ├── package.json            # Plugin đang cài trên máy thật (không ship bun.lock chéo OS)
+│   │       └── omp-plugins.lock.json   # Registry trạng thái plugin của OMP (tự reconcile khi merge upstream)
 │   └── omp-upstream/                   # Overlay port từ upstream zuey-pi (omp-sync-upstream.sh sở hữu)
 │       ├── .omp-syncignore             # Danh sách chặn plugin xung đột (pi-lens, pi-advisor-flow,...)
 │       ├── agent/
@@ -38,13 +39,17 @@ zuey-pi-setup/
 │   ├── omp-sync-upstream.sh        # Script đồng bộ an toàn từ upstream (zero-merge, pinned versions)
 │   ├── omp-setup-backup.sh         # Snapshot máy thật → config/omp + tarball (kèm overlay ở upstream/)
 │   ├── omp-setup-restore.sh        # Restore đa nền tảng: snapshot + overlay (chỉ thêm file còn thiếu)
-│   ├── omp-private-backup.sh       # Backup mã hóa (gpg) memory/history/TypeSafe kit RA NGOÀI repo
+│   ├── omp-private-backup.sh       # Backup mã hóa (gpg) memory/history/TypeSafe/sessions RA NGOÀI repo
+│   ├── omp-private-restore.sh      # Khôi phục archive GPG (chống treo M1 + dò nvm/fnm/volta/mise node)
+│   ├── omp-link-local.py           # Linker opt-in nối shared_mirror local về global ~/.omp/agent/ (giữ nguyên override)
 │   ├── pi-setup-backup.sh          # Script backup gốc của pi
 │   └── pi-setup-restore.sh         # Script restore gốc của pi
 ├── tests/
 │   ├── test-omp-syncignore.sh      # TDD test kiểm tra lọc plugin & giữ nguyên version pinned
 │   ├── test-omp-sync-extraction.sh # TDD test kiểm tra cô lập git show (không gây bẩn git HEAD)
-│   └── test-omp-migration.sh       # Bộ kiểm thử TDD xác minh an toàn dữ liệu
+│   ├── test-omp-migration.sh       # Bộ kiểm thử TDD xác minh backup/restore, ABS_LEFT & lockfile
+│   ├── test-omp-local-linker.sh    # TDD test phân loại override/shared_mirror & junction an toàn
+│   └── test-omp-toolkit-hub.test.ts # Bun test cho extension omp-toolkit-hub.ts (/harvest-loop, session_compact)
 └── backups/
     ├── omp-setup-portable.tar.gz       # Bundle sạch của omp: snapshot ở gốc, overlay ở upstream/
     └── pi-setup-portable.tar.gz        # Bundle nén gốc của pi
@@ -103,13 +108,12 @@ OMP_BACKUP_PASSPHRASE_FILE=~/.omp-backup-pass ./scripts/omp-private-backup.sh --
 
 | Cờ | Nội dung | Ghi chú |
 | :--- | :--- | :--- |
-| `--memory` | `~/.omp/agent/memories/mnemopi/banks/*/mnemopi.db` | Long-term memory theo workspace (máy hiện tại: 69 bank) |
+| `--memory` | `~/.omp/agent/memories/mnemopi/banks/*/mnemopi.db` | Tự lọc bỏ các bank test/scratch tạm (`--include-scratch-banks` để kèm đủ) |
 | `--history` | `~/.omp/agent/history.db` | Lịch sử prompt, tiêu đề/recap session |
+| `--sessions` | `~/.omp/agent/sessions/*.jsonl`, `~/.claude/projects/**/*.jsonl` | Tùy chọn opt-in (không gộp trong `--all`) sao lưu transcript qua bộ stage chịu lock |
 | `--typesafe-kit` | `~/.claude/mcp/typesafe/`, `~/.claude/hooks/lib/typesafe-enabled-resolver.cjs`, `~/.claude/.ck.json` | Code ClaudeKit mà `typesafe-planner.ts` `require()` |
 | `--claude` | Toàn bộ `~/.claude/` sạch (lọc `runtime/`, `.logs/`, `cache/`, `.venv/`, `.credentials.json`) + `~/.claude.json` `mcpServers` | Tự template `{{CLAUDE_NODE}}` / `{{USER_HOME}}` để chạy chéo Windows ↔ macOS |
-| `--all` | Tất cả mục trên | Khuyến nghị dùng `--all` khi chuyển sang máy mới |
-
-SQLite được chụp bằng `sqlite3 .backup` hoặc `VACUUM INTO` (qua bun/node), không dùng `cp`, vì omp mở các DB này ở chế độ WAL. Copy thô có thể bị rách hoặc thiếu dữ liệu nằm trong WAL.
+| `--all` | `--memory --history --typesafe-kit --claude` | Khuyến nghị dùng `--all` khi chuyển sang máy mới |
 
 **Cố ý KHÔNG backup:** `sessions/` (~40 GB), `blobs/`, `stats.db`, `models.db`, `skill-descriptions.db`, `cache/`, `natives/`, `run/`, `logs/`, `webcache/`, `terminal-sessions/`, `auth-broker.token`, `install-id`, `secret-placeholder.key`, và OAuth trong `agent.db` (đăng nhập lại, xem Bước 5).
 

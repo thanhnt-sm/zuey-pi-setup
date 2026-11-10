@@ -1,23 +1,28 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "generatedAt": "2026-11-10T08:05:00.000Z",
   "planPath": "plans/261110-omp-session-tool-consolidation/plan.md",
-  "status": "COMPLETED",
+  "status": "DRIFT_DETECTED",
   "summary": {
-    "totalSessionsScouted": 337,
+    "totalSessionsScouted": 342,
     "totalWorkspacesScouted": 14,
     "targetSuites": 5,
     "currentActivePhase": 6,
-    "harvestedArtifactsCount": 2809,
-    "uniqueCodeClusters": 2314,
-    "lastHarvestTimestamp": "2026-11-10T09:14:50.351420+00:00",
-    "ompSessionsScouted": 63,
+    "harvestedArtifactsCount": 2858,
+    "uniqueCodeClusters": 2361,
+    "lastHarvestTimestamp": "2026-11-10T14:16:05.009272+00:00",
+    "ompSessionsScouted": 68,
     "claudeSessionsScouted": 274,
-    "historyDbPrompts": 1389,
-    "historyDbRecaps": 425,
-    "projectConfigDirsScanned": 77,
-    "projectDeltasCount": 28
+    "historyDbPrompts": 1427,
+    "historyDbRecaps": 430,
+    "projectConfigDirsScanned": 84,
+    "projectDeltasCount": 18,
+    "ompAdvisorsSkipped": 63,
+    "ompAdvisorsIncluded": 0,
+    "skippedUnchanged": 0,
+    "watermarkedFilesCount": 342,
+    "clusterIndexCount": 1896
   },
   "suites": {
     "pmo_project_suite": {
@@ -34,7 +39,7 @@
         "MS Project (.mpp/.xml) and Excel (.xlsx) 2-way sync with dual-mode CLI"
       ],
       "crossOsStrategy": "Python 3 + openpyxl + defusedxml for Windows & macOS; Windows COM fallback",
-      "harvestedCount": 372
+      "harvestedCount": 383
     },
     "office_doc_suite": {
       "targetPath": "config/omp/agent/skills/office-doc-suite",
@@ -52,7 +57,7 @@
         "Weekly KPI calculation and reporting engine"
       ],
       "crossOsStrategy": "Python 3 + python-docx + openpyxl + markdown; headless SVG/Mermaid rendering",
-      "harvestedCount": 54
+      "harvestedCount": 62
     },
     "email_intelligence_suite": {
       "targetPath": "config/omp/agent/skills/email-intelligence-suite",
@@ -67,7 +72,7 @@
         "Dual-mode interactive menu + non-interactive agent CLI"
       ],
       "crossOsStrategy": "Python standard email library + extract-msg (Windows + macOS); PowerShell Outlook COM optional",
-      "harvestedCount": 48
+      "harvestedCount": 22
     },
     "system_maintenance_suite": {
       "targetPath": "config/omp/agent/skills/system-maintenance-suite",
@@ -85,7 +90,7 @@
         "Safe dry-run inspection mode and AI tool uninstaller script builder"
       ],
       "crossOsStrategy": "OS-detecting runner executing .ps1 on Windows and .sh on macOS",
-      "harvestedCount": 110
+      "harvestedCount": 115
     },
     "omp_session_harvester": {
       "targetPath": "config/omp/agent/skills/omp-session-harvester",
@@ -106,7 +111,7 @@
     "general_utilities": {
       "targetPath": "config/harvest-workspaces.json",
       "status": "TRIAGED_3_TIER",
-      "harvestedCount": 2225
+      "harvestedCount": 2276
     }
   },
   "backupParityGaps": {
@@ -174,10 +179,10 @@
       "suite": "general_utilities",
       "occurrences": 4,
       "targets": [
-        "<local-workspace>/references/typesafe-judgments.md#edit25",
-        "<local-workspace>/references/red-team-workflow.md#edit27",
-        "<local-workspace>/references/typesafe-judgments.md#edit28",
-        "<local-workspace>/references/red-team-workflow.md#edit30"
+        "<local-workspace>/typesafe-judgments.md#edit25",
+        "<local-workspace>/red-team-workflow.md#edit27",
+        "<local-workspace>/typesafe-judgments.md#edit28",
+        "<local-workspace>/red-team-workflow.md#edit30"
       ]
     },
     {
@@ -191,13 +196,23 @@
       ]
     },
     {
+      "hash": "f0b6a635de3e",
+      "suite": "pmo_project_suite",
+      "occurrences": 3,
+      "targets": [
+        "config/omp/agent/skills/pmo-project-suite/scripts/venv_bootstrap.py",
+        "config/omp/agent/skills/office-doc-suite/scripts/venv_bootstrap.py",
+        "config/omp/agent/skills/email-intelligence-suite/scripts/venv_bootstrap.py"
+      ]
+    },
+    {
       "hash": "3790bfac522f",
       "suite": "general_utilities",
       "occurrences": 3,
       "targets": [
-        "<local-workspace>/expo-go-compat/apply-source-edits.js#edit1",
-        "<local-workspace>/expo-go-compat/apply-source-edits.js#edit4",
-        "<local-workspace>/expo-go-compat/apply-source-edits.js#edit1"
+        "<local-workspace>/apply-source-edits.js#edit1",
+        "<local-workspace>/apply-source-edits.js#edit4",
+        "<local-workspace>/apply-source-edits.js#edit1"
       ]
     },
     {
@@ -205,9 +220,9 @@
       "suite": "general_utilities",
       "occurrences": 3,
       "targets": [
-        "<local-workspace>/expo-go-compat/apply-source-edits.js#edit2",
-        "<local-workspace>/expo-go-compat/apply-source-edits.js#edit5",
-        "<local-workspace>/expo-go-compat/apply-source-edits.js#edit2"
+        "<local-workspace>/apply-source-edits.js#edit2",
+        "<local-workspace>/apply-source-edits.js#edit5",
+        "<local-workspace>/apply-source-edits.js#edit2"
       ]
     },
     {
@@ -215,9 +230,9 @@
       "suite": "general_utilities",
       "occurrences": 3,
       "targets": [
-        "<local-workspace>/expo-go-compat/apply-source-edits.js#edit3",
-        "<local-workspace>/expo-go-compat/apply-source-edits.js#edit6",
-        "<local-workspace>/expo-go-compat/apply-source-edits.js#edit3"
+        "<local-workspace>/apply-source-edits.js#edit3",
+        "<local-workspace>/apply-source-edits.js#edit6",
+        "<local-workspace>/apply-source-edits.js#edit3"
       ]
     },
     {
@@ -225,9 +240,9 @@
       "suite": "general_utilities",
       "occurrences": 3,
       "targets": [
-        "<local-workspace>/expo-go-compat/self-test.js#edit7",
-        "<local-workspace>/expo-go-compat/self-test.js#edit10",
-        "<local-workspace>/expo-go-compat/self-test.js#edit4"
+        "<local-workspace>/self-test.js#edit7",
+        "<local-workspace>/self-test.js#edit10",
+        "<local-workspace>/self-test.js#edit4"
       ]
     },
     {
@@ -235,9 +250,9 @@
       "suite": "general_utilities",
       "occurrences": 3,
       "targets": [
-        "<local-workspace>/expo-go-compat/self-test.js#edit8",
-        "<local-workspace>/expo-go-compat/self-test.js#edit11",
-        "<local-workspace>/expo-go-compat/self-test.js#edit5"
+        "<local-workspace>/self-test.js#edit8",
+        "<local-workspace>/self-test.js#edit11",
+        "<local-workspace>/self-test.js#edit5"
       ]
     },
     {
@@ -245,9 +260,9 @@
       "suite": "general_utilities",
       "occurrences": 3,
       "targets": [
-        "<local-workspace>/expo-go-compat/self-test.js#edit9",
-        "<local-workspace>/expo-go-compat/self-test.js#edit12",
-        "<local-workspace>/expo-go-compat/self-test.js#edit6"
+        "<local-workspace>/self-test.js#edit9",
+        "<local-workspace>/self-test.js#edit12",
+        "<local-workspace>/self-test.js#edit6"
       ]
     },
     {
@@ -255,9 +270,9 @@
       "suite": "general_utilities",
       "occurrences": 3,
       "targets": [
-        "<local-workspace>/expo-go-compat/self-test.js#edit13",
-        "<local-workspace>/expo-go-compat/self-test.js#edit14",
-        "<local-workspace>/expo-go-compat/self-test.js#edit7"
+        "<local-workspace>/self-test.js#edit13",
+        "<local-workspace>/self-test.js#edit14",
+        "<local-workspace>/self-test.js#edit7"
       ]
     },
     {
@@ -265,9 +280,9 @@
       "suite": "general_utilities",
       "occurrences": 3,
       "targets": [
-        "<local-workspace>/99999_Mobile_Demo/sync-svn-runtime-go.sh#edit15",
-        "<local-workspace>/99999_Mobile_Demo/sync-svn-runtime-go.sh#edit16",
-        "<local-workspace>/99999_Mobile_Demo/sync-svn-runtime-go.sh#edit8"
+        "<local-workspace>/sync-svn-runtime-go.sh#edit15",
+        "<local-workspace>/sync-svn-runtime-go.sh#edit16",
+        "<local-workspace>/sync-svn-runtime-go.sh#edit8"
       ]
     },
     {
@@ -293,8 +308,8 @@
       "suite": "system_maintenance_suite",
       "occurrences": 2,
       "targets": [
-        "<local-workspace>/CMD/06_cleanup_ai_tools.ps1",
-        "<local-workspace>/CMD/06_cleanup_ai_tools.ps1"
+        "<local-workspace>/06_cleanup_ai_tools.ps1",
+        "<local-workspace>/06_cleanup_ai_tools.ps1"
       ]
     },
     {
@@ -302,8 +317,8 @@
       "suite": "system_maintenance_suite",
       "occurrences": 2,
       "targets": [
-        "<local-workspace>/CMD/09_cleanup_dism_updates.ps1",
-        "<local-workspace>/CMD/09_cleanup_dism_updates.ps1"
+        "<local-workspace>/09_cleanup_dism_updates.ps1",
+        "<local-workspace>/09_cleanup_dism_updates.ps1"
       ]
     },
     {
@@ -312,7 +327,7 @@
       "occurrences": 2,
       "targets": [
         "scan_stale.ps1",
-        "<local-workspace>/CleanPC/scan_stale.ps1"
+        "<local-workspace>/scan_stale.ps1"
       ]
     },
     {
@@ -321,7 +336,7 @@
       "occurrences": 2,
       "targets": [
         "scan_stale2.ps1",
-        "<local-workspace>/CleanPC/scan_stale2.ps1"
+        "<local-workspace>/scan_stale2.ps1"
       ]
     },
     {
@@ -330,7 +345,7 @@
       "occurrences": 2,
       "targets": [
         "check_c.ps1",
-        "<local-workspace>/CleanPC/check_c.ps1"
+        "<local-workspace>/check_c.ps1"
       ]
     },
     {
@@ -339,25 +354,91 @@
       "occurrences": 2,
       "targets": [
         "check_c2.ps1",
-        "<local-workspace>/CleanPC/check_c2.ps1"
-      ]
-    },
-    {
-      "hash": "2167df76d0d4",
-      "suite": "system_maintenance_suite",
-      "occurrences": 2,
-      "targets": [
-        "<local-workspace>/CleanPC/01_Windows/CMD/12_cleanup_omp_sessions.ps1",
-        "<local-workspace>/CMD/12_cleanup_omp_sessions.ps1"
+        "<local-workspace>/check_c2.ps1"
       ]
     }
   ],
   "globalDiffSummary": {
-    "globalOmpSkillsCount": 10,
-    "globalOmpAgentsCount": 2,
+    "globalOmpSkillsCount": 21,
+    "globalOmpAgentsCount": 29,
     "globalClaudeSkillsCount": 100,
     "globalClaudeAgentsCount": 19,
-    "projectConfigDirsScanned": 77,
-    "projectDeltasCount": 28
-  }
+    "projectConfigDirsScanned": 84,
+    "projectDeltasCount": 18,
+    "containerLinksCount": 1
+  },
+  "promotedHashes": {},
+  "driftDetails": {
+    "unpromotedHashes": [
+      "0033126ae459",
+      "00340b58f47a",
+      "004721a3eb82",
+      "00c6b67e4031",
+      "0104e82982af",
+      "011aada58d3a",
+      "01507dff08b7",
+      "015cf0175435",
+      "01a7386cfb38",
+      "01b353eb8f92",
+      "01c9d3ad0cd3",
+      "01cede8e77be",
+      "01fb68aefecc",
+      "02190e24d5fa",
+      "029893b637fc",
+      "029fc1658161",
+      "02b9fbce10f4",
+      "02ffef44fe3f",
+      "031872221550",
+      "0328487447e9",
+      "034e233b0039",
+      "037598b4c727",
+      "0379396db635",
+      "03d34cd98f01",
+      "04216856fea1",
+      "042216725337",
+      "0424a2580a95",
+      "042ea06d7c73",
+      "044631a2ce6c",
+      "046cf75e22cb",
+      "04706fd6a3d1",
+      "050f79e77a6e",
+      "059a1059b339",
+      "05a319fa95ba",
+      "05bd645c285a",
+      "05f4ffb8cef1",
+      "05fea1a2e311",
+      "062d1062e64c",
+      "064af9cda97c",
+      "067854a38a87",
+      "06821274e79d",
+      "0686a63661a3",
+      "06ae71010c4e",
+      "06e854b22bfe",
+      "06ffa17441cd",
+      "070be77ec67a",
+      "074507e9319a",
+      "075a920dd5b0",
+      "07609b343948",
+      "078c643ad18d"
+    ],
+    "unpromotedDeltaDirs": [
+      "<local-workspace>/.Backup_Tool/.claude",
+      "<local-workspace>/PM_PhanTich/.claude",
+      "<local-workspace>/104_PM_PhanTich/.claude",
+      "<local-workspace>/claudekit-marketing/.claude",
+      "<local-workspace>/OutlookOkan/.claude",
+      "<local-workspace>/OutlookOkan/.agent",
+      "<local-workspace>/NanoResearch-main/.claude",
+      "<local-workspace>/OpenHarness/.claude",
+      "<local-workspace>/TMP_Source/.agent",
+      "<local-workspace>/08_Bot/.claude",
+      "<local-workspace>/01_Setup_HOME/.claude",
+      "<local-workspace>/01_Setup_HOME/.agent",
+      "<local-workspace>/10_DesignDatabase_Code_To_Relation_Key_Mermaid/.agent",
+      "<local-workspace>/rtk/.claude",
+      "<local-workspace>/CleanPC/.claude",
+      "<local-workspace>/Windows_change_device_keepDATA/.agent"
+    ]
+  },
+  "cacheLocation": "~/.omp/agent/omp-harvester-cache.json"
 }

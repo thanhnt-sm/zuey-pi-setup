@@ -103,7 +103,7 @@ def sanitize_path(path_str: str, priv_pat: Optional[re.Pattern[str]] = None) -> 
         norm = "~" + norm[len(home):]
     elif re.match(r"^[A-Za-z]:/", norm):
         parts = [p for p in norm.split("/") if p]
-        tail = parts[-2:] if len(parts) >= 2 else parts
+        tail = parts[-2:] if (len(parts) >= 2 and parts[-1] in (".omp", ".claude", ".agent")) else (parts[-1:] if parts else [])
         norm = "<local-workspace>/" + "/".join(tail)
     elif norm.startswith(("/Users/", "/home/")):
         parts = [p for p in norm.split("/") if p]
@@ -112,7 +112,7 @@ def sanitize_path(path_str: str, priv_pat: Optional[re.Pattern[str]] = None) -> 
     elif norm.startswith("/") and not norm.lower().startswith(_POSIX_SYS_PREFIXES):
         parts = [p for p in norm.split("/") if p]
         if len(parts) >= 3:
-            norm = "<local-workspace>/" + "/".join(parts[-2:])
+            norm = "<local-workspace>/" + "/".join(parts[-1:])
     if priv_pat is not None:
         norm = priv_pat.sub("[PROJECT_CODE]", norm)
     return norm
@@ -480,17 +480,31 @@ class SessionHarvester:
             "skipped_unchanged": 0,
         }
 
-    def _load_existing_watermarks(self) -> Dict[str, Dict[str, Any]]:
-        if self.ledger_path and os.path.exists(self.ledger_path):
-            try:
-                data = json.loads(Path(self.ledger_path).read_text(encoding="utf-8"))
-                wms = data.get("fileWatermarks", {})
-                if isinstance(wms, dict):
-                    return wms
-            except Exception:
-                pass
-        return {}
+    def _watermark_cache_path(self) -> Optional[Path]:
+        repo_root = find_repo_root()
+        if repo_root is None or not self.ledger_path:
+            return None
+        try:
+            lp = Path(self.ledger_path).resolve()
+            plans_dir = (repo_root / "plans").resolve()
+            if lp == plans_dir or plans_dir in lp.parents:
+                return Path.home() / ".omp" / "agent" / "omp-harvester-cache.json"
+        except OSError:
+            pass
+        return None
 
+    def _load_existing_watermarks(self) -> Dict[str, Dict[str, Any]]:
+        cache_p = self._watermark_cache_path()
+        for cand in ([cache_p] if cache_p else []) + ([Path(self.ledger_path)] if self.ledger_path else []):
+            if cand and cand.is_file():
+                try:
+                    data = json.loads(cand.read_text(encoding="utf-8"))
+                    wms = data.get("fileWatermarks", {})
+                    if isinstance(wms, dict) and wms:
+                        return wms
+                except Exception:
+                    pass
+        return {}
     def _load_config(self) -> Dict[str, Any]:
         base: Dict[str, Any] = {}
         if self.config_path and os.path.exists(self.config_path):
@@ -920,10 +934,13 @@ class SessionHarvester:
         ledger = json.loads(Path(self.ledger_path).read_text(encoding="utf-8"))
         locs = ledger.get("clusterIndex", {}).get(cluster_hash)
         if not locs:
+            cache_p = self._watermark_cache_path()
+            if cache_p and cache_p.is_file():
+                locs = json.loads(cache_p.read_text(encoding="utf-8")).get("clusterIndex", {}).get(cluster_hash)
+        if not locs:
             raise KeyError(f"Cluster hash not found in ledger clusterIndex: {cluster_hash}")
         if isinstance(locs, dict):
             locs = [locs]
-
         written: List[str] = []
         out_root = Path(out_dir)
         out_root.mkdir(parents=True, exist_ok=True)
@@ -1019,10 +1036,21 @@ class SessionHarvester:
             ledger["status"] = "HARVESTED"
         elif not unpromoted_hashes and not unpromoted_delta_dirs:
             ledger.pop("driftDetails", None)
-
-        ledger["fileWatermarks"] = self.file_watermarks
-        ledger["clusterIndex"] = self.cluster_index
-
+        cache_p = self._watermark_cache_path()
+        if cache_p is not None:
+            cache_p.parent.mkdir(parents=True, exist_ok=True)
+            cache_p.write_text(
+                json.dumps({"fileWatermarks": self.file_watermarks, "clusterIndex": self.cluster_index}, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            ledger.pop("fileWatermarks", None)
+            ledger.pop("clusterIndex", None)
+            ledger["cacheLocation"] = "~/.omp/agent/omp-harvester-cache.json"
+            ledger["summary"]["watermarkedFilesCount"] = len(self.file_watermarks)
+            ledger["summary"]["clusterIndexCount"] = len(self.cluster_index)
+        else:
+            ledger["fileWatermarks"] = self.file_watermarks
+            ledger["clusterIndex"] = self.cluster_index
         suite_counts: Dict[str, int] = {}
         for a in self.harvested_artifacts:
             s = a.get("suite", "general_utilities")

@@ -28,9 +28,14 @@ grep -q "agent/skills/office-doc-suite/SKILL.md" "$TAR_LIST_FILE" || { echo "FAI
 grep -q "agent/skills/email-intelligence-suite/SKILL.md" "$TAR_LIST_FILE" || { echo "FAIL: Missing email-intelligence-suite in tarball" >&2; exit 1; }
 grep -q "agent/skills/system-maintenance-suite/SKILL.md" "$TAR_LIST_FILE" || { echo "FAIL: Missing system-maintenance-suite in tarball" >&2; exit 1; }
 grep -q "agent/agents/pmo-ba.md" "$TAR_LIST_FILE" || { echo "FAIL: Missing pmo-ba.md in tarball" >&2; exit 1; }
+grep -q "agent/agents/planner.md" "$TAR_LIST_FILE" || { echo "FAIL: Missing ported Claude planner.md in tarball" >&2; exit 1; }
+grep -q "agent/rules/orchestration-protocol.md" "$TAR_LIST_FILE" || { echo "FAIL: Missing ported orchestration-protocol.md in tarball" >&2; exit 1; }
+grep -q "agent/commands/ck-council.md" "$TAR_LIST_FILE" || { echo "FAIL: Missing ck-council.md in tarball" >&2; exit 1; }
+grep -q "agent/skills/omp-session-harvester/scripts/harvester_core.py" "$TAR_LIST_FILE" || { echo "FAIL: Missing harvester_core.py in tarball" >&2; exit 1; }
+grep -q "agent/extensions/omp-toolkit-hub.ts" "$TAR_LIST_FILE" || { echo "FAIL: Missing omp-toolkit-hub.ts in tarball" >&2; exit 1; }
 grep -q "agent/tools-requirements.txt" "$TAR_LIST_FILE" || { echo "FAIL: Missing tools-requirements.txt in tarball" >&2; exit 1; }
+grep -q "plugins/omp-plugins.lock.json" "$TAR_LIST_FILE" || { echo "FAIL: Missing plugins/omp-plugins.lock.json in tarball" >&2; exit 1; }
 grep -q "agent/extensions/typesafe-planner/tools/jev-paired-workspace.ts" "$TAR_LIST_FILE" || { echo "FAIL: Missing recursive ../tools/ deref in typesafe-planner" >&2; exit 1; }
-
 echo "=== [E2E] Restoring to Windows target & simulated Darwin/macOS target ==="
 TGT_WIN="$TEST_TMP/win_omp"
 TGT_MAC="$TEST_TMP/mac_omp"
@@ -52,5 +57,40 @@ echo '{"tasks":[{"id":"A","duration":2},{"id":"B","duration":3,"depends_on":["A"
 "$PY_BIN" "$TGT_MAC/agent/skills/pmo-project-suite/scripts/pmo_cli.py" --cmd cpm --input "$CPM_JSON" --json | grep -q '"project_duration": 5.0'
 "$PY_BIN" "$TGT_MAC/agent/skills/system-maintenance-suite/scripts/maintenance_cli.py" --cmd analyze --os darwin --dry-run --json | grep -q '"os": "darwin"'
 "$PY_BIN" "$TGT_MAC/agent/skills/office-doc-suite/scripts/office_cli.py" --cmd init-kpi --output "$TEST_TMP/kpi.xlsx" --json | grep -q '"initialized"'
+
+# Pure-Python PDF extraction smoke check on Darwin target
+PDF_PATH="$TEST_TMP/darwin_sample.pdf"
+"$PY_BIN" - "$PDF_PATH" <<'PY'
+import pathlib, sys
+txt = "Darwin Pure Python PDF Test"
+stream = f"BT /F1 12 Tf 72 720 Td ({txt}) Tj ET\n".encode("ascii")
+objs = [
+    b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
+    f"4 0 obj\n<< /Length {len(stream)} >>\nstream\n".encode("ascii") + stream + b"endstream\nendobj\n",
+    b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+]
+buf = bytearray(b"%PDF-1.4\n")
+offs = [0]
+for o in objs:
+    offs.append(len(buf))
+    buf.extend(o)
+xp = len(buf)
+buf.extend(f"xref\n0 {len(offs)}\n0000000000 65535 f \n".encode("ascii"))
+for o in offs[1:]:
+    buf.extend(f"{o:010d} 00000 n \n".encode("ascii"))
+buf.extend(f"trailer\n<< /Size {len(offs)} /Root 1 0 R >>\nstartxref\n{xp}\n%%EOF\n".encode("ascii"))
+pathlib.Path(sys.argv[1]).write_bytes(bytes(buf))
+PY
+"$PY_BIN" "$TGT_MAC/agent/skills/office-doc-suite/scripts/office_cli.py" --cmd to-md --input "$PDF_PATH" --json | grep -q "Darwin Pure Python PDF Test"
+
+# Standalone harvest_cli.py --next smoke check outside repo from Darwin target
+ISO_HOME="$TEST_TMP/darwin_home"
+ISO_CWD="$TEST_TMP/darwin_cwd"
+mkdir -p "$ISO_HOME/.omp/agent" "$ISO_CWD"
+echo '{"status":"COMPLETED","suites":{}}' > "$ISO_HOME/.omp/agent/omp-consolidation-ledger.json"
+(cd "$ISO_CWD" && env -u ZUEY_PI_REPO HOME="$ISO_HOME" USERPROFILE="$ISO_HOME" \
+  "$PY_BIN" "$TGT_MAC/agent/skills/omp-session-harvester/scripts/harvest_cli.py" --next | grep -q '"COMPLETED"')
 
 echo "=== ALL CROSS-OS E2E VALIDATION TESTS PASSED ==="

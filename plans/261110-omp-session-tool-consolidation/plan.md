@@ -1,7 +1,8 @@
 ---
 title: "OMP Ecosystem V2: 3-Tier Consolidation, Native Priority-100 Hub, Multi-Source Harvester & Cross-OS Backup/Restore"
 description: "V2 consensus plan: multi-source harvester (107 OMP + 274 Claude + history.db + 149 dirs), 3-tier curation into OMP-native config/omp/agent/skills (Priority 100) + agents + commands, full parity/bug fixes for PMO & Office suites, Email & Maintenance suites, and Windows/macOS cross-OS backup/restore."
-status: in-progress
+status: superseded
+superseded_by: 261110-1750-omp-ecosystem-v3-hardening
 priority: P1
 effort: "20h"
 branch: main

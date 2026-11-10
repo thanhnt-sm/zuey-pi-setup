@@ -9,19 +9,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 AGENT_DIR="$ROOT/config/omp/agent"
 
-echo "=== [Integrity] Checking V2 OMP Priority-100 structure ==="
+echo "=== [Integrity] Checking V3 OMP Priority-100 & Claude Parity structure ==="
 for skill in pmo-project-suite office-doc-suite email-intelligence-suite system-maintenance-suite omp-session-harvester pm-ba windows_fix ak-render hlk-loop; do
   test -f "$AGENT_DIR/skills/$skill/SKILL.md" || { echo "FAIL: Missing skills/$skill/SKILL.md" >&2; exit 1; }
 done
-for ag in advisor.md ck-advisor.md pmo-ba.md pmo-planner.md pmo-reporter.md pmo-red-team.md hlk-worker.md; do
+test -f "$AGENT_DIR/skills/omp-session-harvester/scripts/harvester_core.py" || { echo "FAIL: Missing harvester_core.py" >&2; exit 1; }
+test -f "$AGENT_DIR/extensions/omp-toolkit-hub.ts" || { echo "FAIL: Missing omp-toolkit-hub.ts" >&2; exit 1; }
+test -f "$AGENT_DIR/extensions/omp-toolkit-hub/loop-state.ts" || { echo "FAIL: Missing loop-state.ts" >&2; exit 1; }
+for ag in advisor.md ck-advisor.md pmo-ba.md pmo-planner.md pmo-reporter.md pmo-red-team.md hlk-worker.md Explore.md brainstormer.md code-reviewer.md debugger.md fullstack-developer.md orchestrator.md planner.md researcher.md tester.md; do
   test -f "$AGENT_DIR/agents/$ag" || { echo "FAIL: Missing agents/$ag" >&2; exit 1; }
 done
 test -f "$AGENT_DIR/commands/pmo-delivery.md"
 test -f "$AGENT_DIR/commands/pm-email.md"
+test -f "$AGENT_DIR/commands/ck-council.md"
 test -f "$AGENT_DIR/rules/team-coordination-rules.md"
+test -f "$AGENT_DIR/rules/orchestration-protocol.md"
+test -f "$AGENT_DIR/rules/pm-ba-prewrite-guards.md"
 test -f "$AGENT_DIR/tools-requirements.txt"
-echo "✓ PASS: All required Priority-100 skills, agents, commands, rules, and tools-requirements.txt present."
-
+grep -q "^pypdf>=" "$AGENT_DIR/tools-requirements.txt" || { echo "FAIL: tools-requirements.txt missing pypdf" >&2; exit 1; }
+echo "✓ PASS: All V3 Priority-100 skills, extension hub, 18+ agents, commands, rules, and pypdf present."
 echo "=== [Integrity] Checking Tier B skills-optin hide: true invariant ==="
 OPTIN_COUNT=0
 for sm in "$AGENT_DIR/skills-optin"/*/SKILL.md; do

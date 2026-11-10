@@ -266,12 +266,12 @@ error: Fail extracting tarball for "@mariozechner/pi-coding-agent"
 File `bun.lock` được sinh trên Windows với `lockfileVersion: 2` không tương thích với phiên bản Bun hoặc môi trường macOS M1. Khi Bun cố gắng bỏ qua lockfile và kéo lại tarball từ npm registry, bộ đệm cache cục bộ bị hỏng hoặc timeout mạng.
 
 #### Cách khắc phục triệt để:
-1. **Xóa sạch cache và lockfile cũ**:
+1. **Xóa sạch cache và `bun.lock` cũ (chỉ xóa `omp-plugins.lock.json` nếu nghi registry bị hỏng)**:
    ```bash
-   rm -rf ~/.omp/plugins/bun.lock ~/.omp/plugins/omp-plugins.lock.json ~/.omp/plugins/node_modules
+   rm -rf ~/.omp/plugins/bun.lock ~/.omp/plugins/node_modules
    bun pm cache rm
    ```
-2. **Cập nhật repo mới nhất** (bản snapshot mới nhất đã loại bỏ hoàn toàn lockfile rác):
+2. **Cập nhật repo mới nhất** (snapshot chuẩn đã loại bỏ `bun.lock` chéo OS, đồng thời giữ và tự reconcile `plugins/omp-plugins.lock.json` khi gộp plugin từ upstream):
    ```bash
    git pull origin main
    ./scripts/omp-setup-restore.sh
@@ -377,11 +377,15 @@ cp -r ~/.omp/restore-backups/<latest_timestamp>/* ~/.omp/
 | Tác vụ | Lệnh thực thi | Ghi chú |
 | :--- | :--- | :--- |
 | **Backup cấu hình lên Git** | `./scripts/omp-setup-backup.sh --source ~/.omp --config-dir config/omp -o backups/omp-setup-portable.tar.gz` | Tạo snapshot sạch, an toàn |
-| **Backup dữ liệu riêng tư** | `OMP_BACKUP_PASSPHRASE_FILE=~/.omp-backup-pass ./scripts/omp-private-backup.sh --all` | Mã hóa memory, history |
-| **Restore máy mới (Setup)** | `./scripts/omp-setup-restore.sh` | Chạy trên macOS/Linux/Windows mới |
-| **Restore ký ức & history** | `./scripts/omp-private-restore.sh ~/Downloads/omp-private-<ts>.tar.gz.gpg` | Chống treo M1, tự dọn WAL |
+| **Backup dữ liệu riêng tư** | `OMP_BACKUP_PASSPHRASE_FILE=~/.omp-backup-pass ./scripts/omp-private-backup.sh --all` | Mã hóa memory (đã lọc bank scratch), history, `--claude` |
+| **Backup thêm sessions (.jsonl)** | `./scripts/omp-private-backup.sh --all --sessions` | Opt-in backup transcript OMP + Claude ngoài Git |
+| **Thu hoạch & lặp đa session** | `python3 ~/.omp/agent/skills/omp-session-harvester/scripts/harvest_cli.py --scan --diff-global` | Incremental watermarks; trong OMP dùng `/harvest-loop` |
+| **Trích xuất script đầy đủ theo hash** | `python3 ~/.omp/agent/skills/omp-session-harvester/scripts/harvest_cli.py --extract <hash> --out ./out` | Khôi phục toàn bộ mã gốc từ `.jsonl` |
+| **Tham chiếu thư mục local về global** | `python3 scripts/omp-link-local.py --plan` (rồi `--apply` / `--verify`) | Opt-in junction/hash-sync cho `shared_mirror`, giữ nguyên `override` |
+| **Restore máy mới (Setup)** | `./scripts/omp-setup-restore.sh` | Chạy trên macOS/Linux/Windows mới (tự cài `pypdf` vào `tools-venv`) |
+| **Restore ký ức & history** | `./scripts/omp-private-restore.sh ~/Downloads/omp-private-<ts>.tar.gz.gpg` | Chống treo M1, dò `nvm`/`fnm`/`volta`/`mise` node, tự dọn WAL |
 | **Đồng bộ từ zuey gốc** | `./scripts/omp-sync-upstream.sh` | Zero git merge, giữ nguyên version |
-| **Chạy toàn bộ bài test** | `./tests/test-omp-migration.sh && ./tests/test-omp-private-restore.sh` | Xác minh an toàn trước khi push |
+| **Chạy toàn bộ bài test** | `./tests/test-omp-migration.sh && bun test tests/test-omp-toolkit-hub.test.ts` | Xác minh an toàn trước khi push |
 | **Hủy tiến trình GPG treo** | `killall gpg-agent 2>/dev/null; rm -f ~/.gnupg/*.lock` | Cứu nguy khi gpg bị đứng |
 | **Dọn sạch SQLite WAL** | `find ~/.omp/agent \( -name "*.db-wal" -o -name "*.db-shm" \) -delete` | Tránh lock database |
 | **Xóa sạch cache Bun** | `rm -rf ~/.omp/plugins/node_modules ~/.omp/plugins/bun.lock && bun pm cache rm` | Xử lý lỗi cài đặt plugin |

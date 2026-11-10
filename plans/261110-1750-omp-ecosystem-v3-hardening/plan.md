@@ -35,7 +35,7 @@ Hardens and extends the V2 OMP consolidation architecture based on the V3 consen
 | 2 | [Incremental Watermark Loop and Thin OMP Extension](./phase-02-incremental-watermark-loop-and-thin-omp-extension.md) | Completed |
 | 3 | [Global Claude Parity and Opt-In Local Reference Linker](./phase-03-global-claude-parity-and-opt-in-local-reference-linker.md) | Completed |
 | 4 | [Cross-OS PDF MPP Fallback and Private Archive Hygiene](./phase-04-cross-os-pdf-mpp-fallback-and-private-archive-hygiene.md) | Completed |
-| 5 | [Cross-OS E2E Validation Live Sync and Release](./phase-05-cross-os-e2e-validation-live-sync-and-release.md) | Pending |
+| 5 | [Cross-OS E2E Validation Live Sync and Release](./phase-05-cross-os-e2e-validation-live-sync-and-release.md) | Completed |
 
 ## Red Team Review & Verification Log
 
