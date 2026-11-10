@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """
-scripts/omp-promote-assets.py — Promote & Sanitize Tier A/B Assets into config/omp/agent/
-
-Reads config/harvest-workspaces.json (deep-merged with ~/.omp/harvest-workspaces.local.json
-unless --no-local-config), promotes curated Tier A skills/agents/commands/rules into OMP
-Priority-100 native layout (config/omp/agent/) and Tier B non-colliding opt-in skills into
-config/omp/agent/skills-optin/ with `hide: true`, stripping workstation paths, private
-keywords, media bloat, logs, and doc token patterns so public git stays 100% clean.
+scripts/omp-promote-assets.py — Promote & Sanitize Tier A/B Assets and Global Claude Core into config/omp/agent/
 """
 
 from __future__ import annotations
@@ -33,6 +27,22 @@ SANITIZE_RULES = [
 ]
 
 TEXT_EXTS = {".md", ".txt", ".py", ".ps1", ".sh", ".bat", ".cmd", ".ts", ".js", ".cjs", ".mjs", ".json", ".yml", ".yaml", ".toml"}
+
+_CLAUDE_TOOL_MAP = {
+    "read": "read",
+    "grep": "grep",
+    "glob": "glob",
+    "bash": "bash",
+    "edit": "edit",
+    "write": "write",
+    "websearch": "web_search",
+    "askuserquestion": "ask",
+    "agent": "task",
+    "task": "task",
+}
+_CLAUDE_DROP_FM = {"memory", "omitclaudemd", "maxturns", "effort", "disallowedtools"}
+_MODEL_MAP = {"opus": '"@slow"', "sonnet": '"@default"', "haiku": '"@smol"'}
+_PROTECTED_AGENTS = {"advisor.md", "ck-advisor.md"}
 
 
 def _private_terms_pattern(config: Optional[Dict[str, Any]] = None, allow_local: bool = True) -> Optional[re.Pattern[str]]:
@@ -136,17 +146,91 @@ def convert_claude_agent_to_omp(md_text: str, priv_pat: Optional[re.Pattern[str]
     end = md_text.find("\n---", 3)
     if end == -1:
         return sanitize_content(md_text, priv_pat=priv_pat)
-    fm = md_text[3:end]
-    fm = re.sub(r"^model:\s*haiku\s*$", 'model: "@smol"', fm, flags=re.MULTILINE)
-    fm = re.sub(r"^model:\s*sonnet\s*$", 'model: "@default"', fm, flags=re.MULTILINE)
-    fm = re.sub(r"^model:\s*opus\s*$", 'model: "@plan"', fm, flags=re.MULTILINE)
 
-    def _lower_tools(m: re.Match[str]) -> str:
-        items = [t.strip().lower() for t in m.group(1).split(",") if t.strip()]
-        return "tools: " + ", ".join(items)
+    fm_lines = md_text[3:end].strip("\r\n").splitlines()
+    out_lines: List[str] = []
+    for raw_ln in fm_lines:
+        if ":" not in raw_ln or raw_ln.startswith(" "):
+            out_lines.append(raw_ln)
+            continue
+        key, val = raw_ln.split(":", 1)
+        k_low = key.strip().lower()
+        v_str = val.strip()
 
-    fm = re.sub(r"^tools:\s*(.+)$", _lower_tools, fm, flags=re.MULTILINE)
-    return sanitize_content("---" + fm + md_text[end:], priv_pat=priv_pat)
+        if k_low in _CLAUDE_DROP_FM:
+            continue
+        if k_low == "model":
+            m_low = v_str.strip("'\"").lower()
+            if m_low == "inherit":
+                continue
+            out_lines.append(f"model: {_MODEL_MAP.get(m_low, v_str)}")
+        elif k_low == "skills":
+            items = [s.strip() for s in v_str.strip("[]").split(",") if s.strip()]
+            if items:
+                out_lines.append("autoloadSkills: [" + ", ".join(items) + "]")
+        elif k_low == "tools":
+            mapped: List[str] = []
+            seen_t: Set[str] = set()
+            for raw_tok in v_str.split(","):
+                tok = raw_tok.strip()
+                if not tok:
+                    continue
+                base = tok.split("(", 1)[0].strip().lower()
+                if base.startswith("mcp__"):
+                    continue
+                omp_tool = _CLAUDE_TOOL_MAP.get(base)
+                if omp_tool and omp_tool not in seen_t:
+                    seen_t.add(omp_tool)
+                    mapped.append(omp_tool)
+            if mapped:
+                out_lines.append("tools: " + ", ".join(mapped))
+        else:
+            out_lines.append(raw_ln)
+
+    body = md_text[end:]
+    rebuilt = "---\n" + "\n".join(out_lines) + body
+    return sanitize_content(rebuilt, priv_pat=priv_pat)
+
+
+def export_claude_core(
+    claude_dir: Path,
+    target_agent: Path,
+    dry_run: bool = False,
+    priv_pat: Optional[re.Pattern[str]] = None,
+) -> Dict[str, int]:
+    stats = {"core_agents": 0, "core_rules": 0}
+    agents_src = claude_dir / "agents"
+    rules_src = claude_dir / "rules"
+    agents_dst = target_agent / "agents"
+    rules_dst = target_agent / "rules"
+    if not dry_run:
+        agents_dst.mkdir(parents=True, exist_ok=True)
+        rules_dst.mkdir(parents=True, exist_ok=True)
+
+    if agents_src.is_dir():
+        for md in sorted(agents_src.glob("*.md")):
+            if md.name in _PROTECTED_AGENTS or md.name.startswith(("pmo-", "hlk-")):
+                continue
+            converted = convert_claude_agent_to_omp(md.read_text(encoding="utf-8", errors="ignore"), priv_pat=priv_pat)
+            if not dry_run:
+                (agents_dst / md.name).write_text(converted.replace("\r\n", "\n"), encoding="utf-8", newline="\n")
+            stats["core_agents"] += 1
+
+    rule_banner = (
+        "> **OMP Adaptation Note:** Ported read-only from global `~/.claude/rules/`. "
+        "Map Claude `Agent(...)` -> OMP `task`, `advisorModel` -> `modelRoles.advisor`, and `ai-gate-audit` -> `typesafe-planner` extension.\n\n"
+    )
+    if rules_src.is_dir():
+        for md in sorted(rules_src.glob("*.md")):
+            txt = sanitize_content(md.read_text(encoding="utf-8", errors="ignore"), priv_pat=priv_pat)
+            txt = txt.replace("~/.claude/logs/ai-gates/", "~/.omp/agent/logs/ai-gates/")
+            if "OMP Adaptation Note:" not in txt:
+                txt = rule_banner + txt
+            if not dry_run:
+                (rules_dst / md.name).write_text(txt.replace("\r\n", "\n"), encoding="utf-8", newline="\n")
+            stats["core_rules"] += 1
+
+    return stats
 
 
 def copy_skill_dir(
@@ -219,7 +303,6 @@ def promote_all(
         for d in (skills_dir, optin_dir, agents_dir, commands_dir, rules_dir):
             d.mkdir(parents=True, exist_ok=True)
 
-    # 1. Existing global OMP advisors + Tier A agents
     home_agents = Path.home() / ".omp" / "agent" / "agents"
     if home_agents.is_dir():
         for md in home_agents.glob("*.md"):
@@ -246,7 +329,6 @@ def promote_all(
             (agents_dir / item["name"]).write_text(txt.replace("\r\n", "\n"), encoding="utf-8", newline="\n")
         stats["tierA_agents"] += 1
 
-    # 2. Tier A skills
     for item in tier_a.get("skills", []):
         sp = Path(os.path.expanduser(str(item["source"])))
         if not sp.is_dir():
@@ -255,12 +337,10 @@ def promote_all(
             copy_skill_dir(sp, skills_dir / item["name"], hide=False, priv_pat=priv_pat)
         stats["tierA_skills"] += 1
 
-    # Remove legacy managed-skills/ak-render when Tier A Priority-100 ak-render is promoted
     legacy_ak = target_agent / "managed-skills" / "ak-render"
     if not dry_run and legacy_ak.is_dir() and (skills_dir / "ak-render" / "SKILL.md").is_file():
         shutil.rmtree(legacy_ak)
 
-    # 3. Tier A commands & rules
     for item in tier_a.get("commands", []):
         sp = Path(os.path.expanduser(str(item["source"])))
         if not sp.is_file():
@@ -280,12 +360,10 @@ def promote_all(
             (rules_dir / item["name"]).write_text(txt.replace("\r\n", "\n"), encoding="utf-8", newline="\n")
         stats["tierA_rules"] += 1
 
-    # 4. Copy typesafe.json from ~/.omp/agent/ if present
     ts_json = Path.home() / ".omp" / "agent" / "typesafe.json"
     if ts_json.is_file() and not dry_run:
         (target_agent / "typesafe.json").write_text(ts_json.read_text(encoding="utf-8").replace("\r\n", "\n"), encoding="utf-8", newline="\n")
 
-    # 5. Tier B Opt-In Skills (non-colliding names only, hide: true, no media bloat)
     reserved: Set[str] = set()
     for base in (skills_dir, target_agent / "managed-skills", Path.home() / ".claude" / "skills"):
         if base.is_dir():
@@ -313,9 +391,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Promote and sanitize curated Tier A/B assets into config/omp/agent/")
     parser.add_argument("--config", default=str(Path(__file__).resolve().parent.parent / "config" / "harvest-workspaces.json"))
     parser.add_argument("--target", default=str(Path(__file__).resolve().parent.parent / "config" / "omp" / "agent"))
+    parser.add_argument("--claude-dir", default=str(Path.home() / ".claude"))
+    parser.add_argument("--export-claude-core", action="store_true", help="Read-only export 18 core Claude agents and 6 rules to OMP layout.")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-local-config", action="store_true", help="Ignore ~/.omp/harvest-workspaces.local.json.")
     args = parser.parse_args(argv)
+
+    if args.export_claude_core:
+        core_res = export_claude_core(Path(args.claude_dir), Path(args.target), dry_run=args.dry_run)
+        print(json.dumps({"dryRun": args.dry_run, "claudeCore": core_res}, indent=2))
+        return 0
 
     res = promote_all(Path(args.config), Path(args.target), dry_run=args.dry_run, no_local_config=args.no_local_config)
     print(json.dumps({"dryRun": args.dry_run, "promoted": res}, indent=2))

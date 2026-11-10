@@ -36,5 +36,10 @@
     "commands": [],
     "rules": []
   },
-  "tierBOptInSources": []
+  "tierBOptInSources": [],
+  "workspaceClassification": {
+    "override": [],
+    "shared_mirror": [],
+    "archive": []
+  }
 }

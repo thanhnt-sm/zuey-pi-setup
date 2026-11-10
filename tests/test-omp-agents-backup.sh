@@ -122,4 +122,46 @@ if grep -qi "$FAKE_HOME_NAT" "$FAKE_RESTORE_HOME/.claude/settings.json" || grep 
 fi
 grep -q "typesafe" "$FAKE_RESTORE_HOME/.claude.json"
 echo "✓ PASS: Private --claude backup & Darwin restore rewrite Windows node.exe/home cleanly."
+
+echo "=== [TDD] Checking 18 ported core Claude agents, 6 rules, and 4 workflow commands in repo ==="
+REPO_AGENT="$ROOT/config/omp/agent"
+for ag in Explore brainstormer code-reviewer code-simplifier council-adjudicator council-expert debugger docs-manager fullstack-developer git-manager journal-writer mcp-manager orchestrator planner project-manager researcher tester ui-ux-designer; do
+  test -f "$REPO_AGENT/agents/$ag.md" || { echo "FAIL: Missing ported Claude agent $ag.md" >&2; exit 1; }
+done
+for keep in advisor ck-advisor pmo-ba pmo-planner pmo-reporter pmo-red-team hlk-worker; do
+  test -f "$REPO_AGENT/agents/$keep.md" || { echo "FAIL: Existing agent $keep.md missing" >&2; exit 1; }
+done
+for rl in development-rules documentation-management orchestration-protocol primary-workflow skill-domain-routing skill-workflow-routing pm-ba-prewrite-guards; do
+  test -f "$REPO_AGENT/rules/$rl.md" || { echo "FAIL: Missing ported rule $rl.md" >&2; exit 1; }
+done
+for cmd in ck-council ck-parallel ck-red-team ck-scout-fanout; do
+  test -f "$REPO_AGENT/commands/$cmd.md" || { echo "FAIL: Missing workflow command $cmd.md" >&2; exit 1; }
+done
+python - "$REPO_AGENT" <<'PY'
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+core_agents = [
+    "Explore", "brainstormer", "code-reviewer", "code-simplifier",
+    "council-adjudicator", "council-expert", "debugger", "docs-manager",
+    "fullstack-developer", "git-manager", "journal-writer", "mcp-manager",
+    "orchestrator", "planner", "project-manager", "researcher",
+    "tester", "ui-ux-designer",
+]
+bad_tools = ("SendMessage", "WebFetch", "NotebookEdit", "Skill", "TaskCreate", "TaskGet", "TaskUpdate", "TaskList", "mcp__")
+bad_fm_keys = ("memory:", "omitClaudeMd:", "maxTurns:", "effort:", "disallowedTools:", "skills:")
+for name in core_agents:
+    p = root / "agents" / f"{name}.md"
+    txt = p.read_text(encoding="utf-8")
+    assert txt.startswith("---"), f"{name}.md missing frontmatter"
+    fm = txt.split("---", 2)[1]
+    assert not re.search(r"^model:\s*(opus|sonnet|haiku|inherit)\s*$", fm, re.M), f"{name}.md unmapped model: {fm}"
+    for fk in bad_fm_keys:
+        assert not re.search(rf"^{re.escape(fk)}", fm, re.M), f"{name}.md retained unsupported frontmatter {fk}"
+    m = re.search(r"^tools:\s*(.+)$", fm, re.M)
+    if m:
+        for bt in bad_tools:
+            assert bt not in m.group(1), f"{name}.md retained Claude-only tool {bt}: {m.group(1)}"
+    assert not re.search(r"[A-Za-z]:[/\\]+Users[/\\]+(?!user\b|username\b)", txt, re.I), f"{name}.md leaked personal path"
+print("✓ PASS: All 18 ported Claude agents pass OMP schema, tool mapping, and leak checks.")
+PY
 echo "=== ALL AGENTS & PORTABILITY TESTS PASSED ==="
