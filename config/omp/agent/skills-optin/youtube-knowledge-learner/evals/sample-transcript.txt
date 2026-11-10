@@ -1,0 +1,12 @@
+[00:00] Xin chào các bạn, hôm nay chúng ta sẽ học về cách sử dụng AI trong lập trình.
+[00:15] Đầu tiên, bạn cần hiểu rằng AI không thay thế lập trình viên, mà là công cụ hỗ trợ.
+[00:30] Bước đầu tiên là cài đặt môi trường phát triển. Bạn cần Python 3.10 trở lên.
+[00:45] Tiếp theo, cài đặt thư viện cần thiết bằng lệnh pip install openai.
+[01:00] Một lưu ý quan trọng: luôn bảo mật API key của bạn, không bao giờ commit vào git.
+[01:15] Bước thứ hai là tạo một file Python mới và import thư viện.
+[01:30] Sau đó, bạn cần thiết lập client với API key từ biến môi trường.
+[01:45] Cách tốt nhất là sử dụng file .env và thư viện python-dotenv.
+[02:00] Bây giờ chúng ta sẽ tạo một prompt đơn giản để test.
+[02:15] Hãy cẩn thận với prompt injection - đây là một rủi ro bảo mật phổ biến.
+[02:30] Cuối cùng, luôn xử lý lỗi khi gọi API. Sử dụng try-except block.
+[02:45] Tóm lại, AI là công cụ mạnh mẽ nhưng cần sử dụng đúng cách và an toàn.

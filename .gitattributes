@@ -1,7 +1,17 @@
-# Chuẩn hoá line ending khi clone trên mọi HĐH.
-#
-# Script là bash: nếu working tree trên Windows bị CRLF (Git for Windows thường đặt
-# core.autocrlf=true), shebang và mọi dòng lệnh sẽ mang '\r'. Bash của Git Bash hiện
-# tại (5.3) vẫn chịu được — đã test — nhưng đó là hành vi không đảm bảo giữa các bản
-# bash/công cụ khác (WSL, container, make, editor…). Ép LF cho *.sh là rẻ và chắc.
+# Enforce consistent LF line endings across Windows Git Bash, Linux, and macOS
+* text=auto eol=lf
 *.sh text eol=lf
+*.py text eol=lf
+*.ts text eol=lf
+*.js text eol=lf
+*.cjs text eol=lf
+*.mjs text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.example text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=lf
+*.tar.gz binary
+*.png binary

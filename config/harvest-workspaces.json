@@ -1,0 +1,40 @@
+{
+  "version": "2.0.0",
+  "description": "Portable public scan roots and Tier C exclusion patterns for scripts/omp-session-harvester.py. Machine-specific workspaces and private redaction terms belong in ~/.omp/harvest-workspaces.local.json (never committed).",
+  "scanRoots": [
+    "~/Projects",
+    "~/Downloads",
+    "~/tmp"
+  ],
+  "additionalWorkspaces": [],
+  "excludeDirNames": [
+    "node_modules",
+    ".git",
+    "__pycache__",
+    "venv",
+    ".venv",
+    ".next",
+    "dist",
+    "build",
+    "bin",
+    "obj",
+    ".worktrees",
+    "restore-backups",
+    "AppData",
+    ".cache",
+    ".logs"
+  ],
+  "tierCExcludeGlobs": [
+    "*omp_extension_backup_*",
+    "*ck-selftest-proj-*",
+    "*.claude-custom-backups*",
+    "*.claude-custom-releases*"
+  ],
+  "tierAPromoteSources": {
+    "skills": [],
+    "agents": [],
+    "commands": [],
+    "rules": []
+  },
+  "tierBOptInSources": []
+}

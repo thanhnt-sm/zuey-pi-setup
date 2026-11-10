@@ -1,0 +1,26 @@
+{
+  "skill_name": "youtube-knowledge-learner",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Watch this YouTube tutorial and create a Markdown reference note I can use later: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "expected_output": "A project-local Markdown knowledge note with source metadata, transcript source, core concepts, procedures, timestamp index, reusable prompt context, and open questions.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Use this YouTube video as context for the bug I am fixing. Transcribe it, learn the relevant workflow, save a note, then explain what parts apply to the current code task: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "expected_output": "A synthesized Markdown reference note plus task-relevant notes that connect video knowledge to the user's downstream task.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "I already have a transcript file at ./sample-transcript.txt. Turn it into durable AI knowledge notes with a timestamp index and reusable prompt context.",
+      "expected_output": "A Markdown note produced from a user-provided transcript without attempting YouTube download, preserving timestamps when present.",
+      "files": [
+        "sample-transcript.txt"
+      ]
+    }
+  ]
+}
+

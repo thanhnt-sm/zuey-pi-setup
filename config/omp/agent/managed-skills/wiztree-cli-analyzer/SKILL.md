@@ -38,9 +38,16 @@ if %errorLevel% == 0 (
 )
 
 :run_scan
-:: Ensure the path to WizTree64.exe matches the user's installation
-set WIZTREE_PATH="D:\100.Software\wiztree_4_32_portable\WizTree64.exe"
-
+::: Auto-discover WizTree64.exe via env WIZTREE_PATH, PATH, or standard install dirs
+if not defined WIZTREE_PATH (
+    for %%P in ("wiztree64.exe" "%ProgramFiles%\WizTree\WizTree64.exe" "%LOCALAPPDATA%\Programs\WizTree\WizTree64.exe") do (
+        if exist %%P set WIZTREE_PATH=%%P
+    )
+)
+if not defined WIZTREE_PATH (
+    echo WizTree64.exe not found. Set WIZTREE_PATH or install WizTree.
+    exit /b 1
+)
 echo Scanning C: Drive...
 start /wait %WIZTREE_PATH% "C:\" /export="%~dp0wiztree_c.csv" /admin=1 /exportfolders=1 /exportfiles=0 /sortby=2 /exportmaxdepth=5
 

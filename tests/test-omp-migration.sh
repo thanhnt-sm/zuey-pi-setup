@@ -295,6 +295,31 @@ if [ "$rc" -ne 2 ]; then
 fi
 echo "✓ PASS: backup refuses dangling shims and absolute-path imports."
 
+# Non-extension agent/skills/ must also reject raw machine paths, while allowing doc placeholders
+GUARD3_OMP="$TEST_TMP/guard3_omp"
+cp -r "$MOCK_OMP" "$GUARD3_OMP"
+mkdir -p "$GUARD3_OMP/agent/skills/demo-skill"
+echo 'SRC = "C:/Users/alice/private/tool.py"' > "$GUARD3_OMP/agent/skills/demo-skill/run.py"
+set +e
+run_backup --source "$GUARD3_OMP" -o "$TEST_TMP/guard-skill-path.tar.gz" --no-upstream >/dev/null 2>&1
+rc=$?
+set -e
+if [ "$rc" -ne 2 ]; then
+    echo "FAIL: backup accepted a raw personal machine path in agent/skills/."
+    exit 1
+fi
+rm -f "$GUARD3_OMP/agent/skills/demo-skill/run.py"
+echo 'Example URI: `file:///Users/user/docs/sample.pdf` or `/Users/username/project`.' > "$GUARD3_OMP/agent/skills/demo-skill/SKILL.md"
+run_backup --source "$GUARD3_OMP" -o "$TEST_TMP/guard-skill-doc-ok.tar.gz" --no-upstream >/dev/null
+echo "✓ PASS: ABS_LEFT rejects raw machine paths in skills/ while allowing placeholder docs."
+
+# Backup preserves plugins/omp-plugins.lock.json
+if [ ! -f "$MOCK_OUT_DIR/plugins/omp-plugins.lock.json" ]; then
+    echo "FAIL: backup dropped plugins/omp-plugins.lock.json."
+    exit 1
+fi
+echo "✓ PASS: backup preserved plugins/omp-plugins.lock.json."
+
 echo "=== [TDD] Assertions for Restore ==="
 if [ ! -f "$RESTORE_SCRIPT" ]; then
     echo "FAIL: Restore script $RESTORE_SCRIPT does not exist yet."
@@ -365,9 +390,12 @@ if ! echo "$PKG_RESTORED" | grep -q '"pi-footer"' || ! echo "$PKG_RESTORED" | gr
     echo "FAIL: overlay plugin merge wrong (missing pi-footer or overrode existing version): $PKG_RESTORED"
     exit 1
 fi
-echo "✓ PASS: overlay adds only missing files and plugin deps."
-
-# --no-upstream skips the overlay entirely
+LOCK_RESTORED="$(cat "$MOCK_RESTORE_TARGET/plugins/omp-plugins.lock.json")"
+if ! echo "$LOCK_RESTORED" | grep -q '"pi-footer"'; then
+    echo "FAIL: overlay plugin merge did not reconcile plugins/omp-plugins.lock.json: $LOCK_RESTORED"
+    exit 1
+fi
+echo "✓ PASS: overlay adds only missing files, plugin deps, and reconciles omp-plugins.lock.json."
 CLEAN_TARGET="$TEST_TMP/restored_clean"
 OS_OVERRIDE="Darwin" run_restore --source-tar "$MOCK_TARBALL" --target-dir "$CLEAN_TARGET" --no-install --no-upstream >/dev/null
 if [ -e "$CLEAN_TARGET/agent/APPEND_SYSTEM.md" ] || grep -q '"pi-footer"' "$CLEAN_TARGET/plugins/package.json"; then

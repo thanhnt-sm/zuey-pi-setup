@@ -207,10 +207,10 @@ if [ -f "$SYNCIGNORE_FILE" ]; then
   IGNORE_PATTERNS="$(grep -v '^[[:space:]]*#' "$SYNCIGNORE_FILE" | grep -v '^[[:space:]]*$' | tr '\n' ' ')"
 fi
 
-# Obtain upstream settings JSON payload
-TMP_SETTINGS="$(mktemp -t omp-settings-XXXXXX.json)"
-trap 'rm -f "$TMP_SETTINGS"' EXIT
-
+# Obtain upstream settings JSON payload (directory mktemp works identically on macOS BSD & GNU)
+TMP_SYNC_DIR="$(mktemp -d "${TMPDIR:-/tmp}/omp-sync-XXXXXX")"
+TMP_SETTINGS="$TMP_SYNC_DIR/settings.json"
+trap 'rm -rf "$TMP_SYNC_DIR"' EXIT
 if [ -n "$SETTINGS_FILE" ] && [ -f "$SETTINGS_FILE" ]; then
   cp "$SETTINGS_FILE" "$TMP_SETTINGS"
 else
@@ -236,8 +236,7 @@ EOF
 fi
 
 # Atomic jq processing: deduplicate, enforce blocklist, and pin exact upstream versions
-TMP_PKG_OUT="$(mktemp -t omp-pkg-XXXXXX.json)"
-
+TMP_PKG_OUT="$TMP_SYNC_DIR/pkg.json"
 jq -n \
   --slurpfile base "$PACKAGE_JSON_FILE" \
   --slurpfile upstream "$TMP_SETTINGS" \

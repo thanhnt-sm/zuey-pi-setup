@@ -1,50 +1,46 @@
-# Phase 3: PMO & Project Management Suite Standardization
+---
+phase: 3
+title: "PMO Project Suite Relocation, Full Parity & Bug Fixes"
+status: pending
+priority: P1
+effort: "4h"
+dependencies: [2]
+---
+
+# Phase 3: PMO Project Suite Relocation, Full Parity & Bug Fixes
 
 ## Overview
-Package and standardize the Project Management (PMO) domain utilities harvested from `pmi-pmo-framework`, `Note_multiline` (`pmo.py`), and `project-excel-sync-toolkit-2.3.0` into a unified, self-contained OMP Managed Skill at `config/omp/agent/managed-skills/pmo-project-suite/`.
+Move drafted `pmo-project-suite` from `config/managed-skills/` to OMP-native Priority-100 `config/omp/agent/skills/pmo-project-suite/`, install all 4 `pmo-*.md` agents (`autoloadSkills: [pmo-project-suite]`) and `pmo-delivery` command, port all missing `pmi_pmo` / `pmo.py` / `project-excel-sync-toolkit` subsystems, and fix every verified bug.
 
 ## Requirements
-- **Functional Requirements:**
-  1. Consolidate WBS, CPM, EVM, PERT, and Risk calculation modules into a single cross-platform Python core (`scripts/core_pmo.py`) using `openpyxl` and `defusedxml`.
-  2. Integrate the Daily Note parsing and RAID CI/CD tracker (`pmo.py` from `Note_multiline`) into `scripts/note_raid_tracker.py`.
-  3. Generalize the 33 PowerShell MS Project ↔ Excel sync scripts into a cross-platform Python engine (`scripts/project_sync.py`) supporting MS Project XML format natively on Windows & macOS, with optional Windows COM acceleration (`MSProject.Application`) when available.
-  4. Create a unified CLI (`scripts/pmo_cli.py`) with:
-     - **Interactive Menu Mode:** TTY execution without flags presents numbered options:
-       1. Run WBS / CPM / EVM Schedule Analysis
-       2. Parse Daily Notes & Update RAID Register
-       3. Sync MS Project (XML/MPP) and Excel Schedule
-       4. Generate PM Status Report (Markdown / Excel)
-     - **Non-Interactive Agent Mode:** CLI flags `--cmd [cpm|evm|raid|sync|report] --input ... --output ... --json` for autonomous execution by OMP agents.
-  5. Author `SKILL.md` with comprehensive usage instructions, prompt triggers, argument hints, and subagent descriptions (`pmo-planner`, `pmo-reporter`, `pmo-red-team`, `pmo-ba`).
-  6. Author unit tests covering WBS calculation, EVM metrics, and note parsing.
-- **Non-Functional Requirements:**
-  - Zero hardcoded internal customer or project references.
-  - 100% executable on macOS (no dependency on Windows PowerShell or COM).
+- **Functional:**
+  1. Relocate `config/managed-skills/pmo-project-suite/` -> `config/omp/agent/skills/pmo-project-suite/` and remove obsolete `config/managed-skills/pmo-project-suite/`.
+  2. Install `pmo-ba.md`, `pmo-planner.md`, `pmo-reporter.md`, `pmo-red-team.md` in `config/omp/agent/agents/` with `autoloadSkills: [pmo-project-suite]`, and port `flows/project-delivery.md` to `config/omp/agent/commands/pmo-delivery.md`.
+  3. Complete `core_pmo.py` parity with `pmi_pmo`:
+     - Add `obligation.py`, `cr.py`, `security.py` (Zip Slip / Tar traversal / zip bomb / injection scanner), `manifest.py`, `state.py` (`anti_rework`), `excel.py` (`safe_load_workbook` + `=hyperlink(`/pipe checks), `dates.py` (working days/milestones), `rtm.py` (circular dependency & topo sort), `capacity.py` (`calculate_sprint_metrics`), `reports.py` (Check 3 + `risk_level`).
+     - Fix `weight == 0.0` `continue`, `scope_state` exclusion, whitespace evidence, and CPM `_find_paths` `abs(ef - dur) < 1e-4` filter.
+  4. Complete `note_raid_tracker.py` parity & fixes:
+     - Fix `generate_raid_markdown_report` column mappings (`Decisions`/`QnA`/`CR_candidates` status vs notes/source; `Risks` description column).
+     - Defer `check_excel_locked()` until write (`dry_run=True` works when workbook is open in Excel); wire CLI backup rotation; add `auto_init=False` typo safety; support Vietnamese statuses (`đã đóng`, `hủy`, `đã chốt`); restore Dashboard `COUNTIF` & dropdowns.
+     - Port `pmo.py` 7-stage CI/CD (`doctor`, `new`, `lint` fuzzy member check, capacity guard, Jaccard dedupe `stage_action_plan`, `cmd_roll`, `archive_inbox_rows`) and `.pmo_config.json` config support.
+  5. Complete `project_sync.py` parity & fixes:
+     - Fix `PercentComplete` `0..100` vs `0..1` normalization (`1` -> `0.01`, not `1.0`).
+     - Update `_SyncMeta` baseline/generation on `xlsx2msp`; add `--use-com` CLI flag with `$app.DisplayAlerts = $false`; harden `_assert_safe_xml_bytes` for UTF-16 BOM.
+     - Add `profile.json` configurable column/WBS/indentation mapping, sprint date-range extractor, standalone Excel->XML plan builder, and conflict resolution policies (`Project`/`Excel`/`Base`/`Custom`).
+- **Non-Functional:**
+  - Zero internal customer names or hardcoded Windows `D:/` paths; runs via `~/.omp/tools-venv` on Windows & macOS.
 
 ## Related Code Files
-- **Create:** `config/omp/agent/managed-skills/pmo-project-suite/SKILL.md`
-- **Create:** `config/omp/agent/managed-skills/pmo-project-suite/scripts/pmo_cli.py`
-- **Create:** `config/omp/agent/managed-skills/pmo-project-suite/scripts/core_pmo.py`
-- **Create:** `config/omp/agent/managed-skills/pmo-project-suite/scripts/note_raid_tracker.py`
-- **Create:** `config/omp/agent/managed-skills/pmo-project-suite/scripts/project_sync.py`
-- **Create:** `config/omp/agent/managed-skills/pmo-project-suite/tests/test_pmo_suite.py`
-- **Modify:** `plans/omp-consolidation-ledger.json` (mark `pmo_project_suite` as `PACKAGED`)
+- Move/Upgrade: `config/omp/agent/skills/pmo-project-suite/**` (and delete `config/managed-skills/pmo-project-suite/`)
+- Create: `config/omp/agent/agents/pmo-{ba,planner,reporter,red-team}.md`, `config/omp/agent/commands/pmo-delivery.md`
 
 ## Implementation Steps
-1. **Scaffold Managed Skill Directory:**
-   - Create `config/omp/agent/managed-skills/pmo-project-suite/{scripts,references,tests}`.
-2. **Port & Sanitize Core Modules:**
-   - Extract mathematical CPM / EVM calculation from `pmi-pmo-framework`.
-   - Port `pmo.py` note parsing logic from `Note_multiline`.
-   - Generalize MS Project XML parser using `xml.etree.ElementTree` / `defusedxml`.
-3. **Build `pmo_cli.py` Dual-Mode Runner:**
-   - Implement `argparse` with fallback to interactive terminal prompt if no arguments are provided.
-4. **Write Tests:**
-   - Test CPM critical path calculation on a sample 5-task project.
-   - Test EVM metrics calculation (CV, SV, CPI, SPI).
-   - Test note parsing on a sample multiline Markdown note.
+1. Relocate suite to `config/omp/agent/skills/pmo-project-suite/` and install agents/flow command.
+2. Port missing `pmi_pmo` modules and fix `core_pmo.py` bugs.
+3. Port `pmo.py` 7-stage CI/CD and fix all `note_raid_tracker.py` column/lock/Vietnamese-status bugs.
+4. Add `profile.json` / sprint / plan-builder / conflict-policy and fix `project_sync.py` bugs.
+5. Expand `tests/test_pmo_suite.py` and run with `~/.omp/tools-venv` (or Python 3 env).
 
 ## Success Criteria
-- [ ] `python config/omp/agent/managed-skills/pmo-project-suite/tests/test_pmo_suite.py` runs and passes all assertions.
-- [ ] Running `pmo_cli.py --cmd cpm` produces valid critical path analysis.
-- [ ] `SKILL.md` contains clear trigger instructions for OMP agents.
+- [ ] `python3 config/omp/agent/skills/pmo-project-suite/tests/test_pmo_suite.py` exits 0 covering all fixed bugs and ported modules.
+- [ ] `pmo_cli.py --cmd cpm|evm|obligation|cr|raid|sync|sprint|report --json` and interactive TTY exit cleanly.

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "generated_at": "{{ISO_TIMESTAMP}}",
+  "config": {
+    "input_root": "{{INPUT_ROOT_ABSOLUTE_PATH}}",
+    "output_root": "{{OUTPUT_ROOT_ABSOLUTE_PATH}}",
+    "human_export_root": "{{HUMAN_EXPORT_ROOT_ABSOLUTE_PATH}}"
+  },
+  "mappings": [],
+  "audit_log_path": "docs/.pm-ba/audit.log"
+}

@@ -1,44 +1,47 @@
-# Phase 2: Session & Workspace Harvester CLI
+---
+phase: 1
+title: "Multi-Source Harvester & .omp/.claude Global Diff Engine"
+status: in-progress
+priority: P1
+effort: "3h"
+dependencies: []
+---
+
+# Phase 1: Multi-Source Harvester & `.omp`/`.claude` Global Diff Engine
 
 ## Overview
-Develop a dedicated harvesting CLI (`scripts/omp-session-harvester.py`) that scans the 55 OMP session transcripts (`~/.omp/agent/sessions/*.jsonl`), history database (`history.db`), and the 14 known local workspaces to extract reusable tool scripts, detect duplicated utility implementations, and register them into `plans/omp-consolidation-ledger.json`.
+Upgrade `scripts/omp-session-harvester.py` from an OMP-only prototype into an exhaustive, idempotent workstation harvester & global-promotion analyzer covering OMP transcripts (`107` `.jsonl`), Claude transcripts (`274` `.jsonl` + `history.jsonl`), `history.db` (`1,422` prompts / `429` recaps), and all `149` project `.omp`/`.claude`/`.agent` directories via `config/harvest-workspaces.json`.
 
 ## Requirements
-- **Functional Requirements:**
-  1. Parse all `.jsonl` session files in `~/.omp/agent/sessions/` to find file-writing operations (`write`, `edit`, `eval`, python scripts, shell scripts, powershell scripts).
-  2. Index all standalone scripts in the 14 scouted workspaces (PMO utilities, document converters, email exporters, system cleanup scripts).
-  3. Detect sensitive strings (API keys, personal credentials, internal domain URLs, proprietary customer/project codes) and flag them for automated scrubbing.
-  4. Write results into `plans/omp-consolidation-ledger.json` and generate `plans/harvest-inventory.md` with deduplication suggestions.
-  5. Provide dual-mode execution:
-     - `python scripts/omp-session-harvester.py --scan`: Non-interactive JSON/CLI output.
-     - `python scripts/omp-session-harvester.py`: Interactive menu displaying scan summary and harvest options.
-- **Non-Functional Requirements:**
-  - Fast execution (< 15 seconds for all 55 sessions).
-  - Safe read-only operation: does not mutate source workspaces or session JSONL files.
+- **Functional:**
+  1. Create `config/harvest-workspaces.json` encoding canonical scan roots (`~/Projects`, `~/Downloads`, `~/tmp`) plus local overrides in `~/.omp/harvest-workspaces.local.json`, Tier A promotion sources, Tier B opt-in pack sources, and Tier C exclusion globs (`claudekit-engineer` clones, legacy v1 kits, `ck-selftest-proj-*`, `omp_extension_backup_*`, `.worktrees`, `restore-backups`).
+  2. Fix `scan_sessions()` in `scripts/omp-session-harvester.py`:
+     - Index every `eval` call uniquely (`eval_<lang>_<idx>_<hash>`) instead of overwriting `eval_<lang>`.
+     - Capture `edit` tool mutations (`oldText`/`newText` or `old_string`/`new_string`), all `bash` heredocs (`<< 'PY'`, `<< 'END'`, `<<-EOF`, `tee`, inline `python -c`/`node -e`/`bun -e`/`pwsh -Command`), and filter out non-code docs unless under `skills/`.
+     - Parse `~/.claude/projects/**/*.jsonl` (`type == "tool_use"`, `input` schema) and `~/.claude/history.jsonl`.
+     - Query `~/.omp/agent/history.db` (`history`, `session_recaps`, `session_titles`) read-only (via SQLite `uri=True` immutable/ro or safe read snapshot) to discover active tool `cwd`s and session context.
+     - Exclude `__advisor*.jsonl` consistently from both `scan_sessions()` and `totalSessionsScouted`.
+  3. Add `.omp`/`.claude`/`.agent` project-vs-global inventory & diff mode (`--diff-global`) detecting missing skills, agents, workflows, commands, hooks, and rules plus symlink/junction status.
+  4. Add `--next` (prints next pending ledger unit for multi-session loop resumption) and `--verify-ledger` flags; fix `os.makedirs(os.path.dirname(path) or ".", exist_ok=True)`.
+  5. Strengthen `SENSITIVE_PATTERNS` (`sk-ant-`, `github_pat_`, `ya29.`, JWT `eyJ...`, `xox...`, private keys, internal customer keywords via `privateKeywords` / `OMP_SENSITIVE_TERMS`, machine paths).
+- **Non-Functional:**
+  - Read-only against source transcripts, `history.db`, and project dirs.
+  - Zero sensitive tokens or customer names written to `plans/omp-consolidation-ledger.json` or `plans/harvest-inventory.md`.
 
 ## Related Code Files
-- **Create:** `scripts/omp-session-harvester.py`
-- **Create:** `tests/test-omp-session-harvester.sh`
-- **Modify:** `plans/omp-consolidation-ledger.json`
-- **Generate:** `plans/harvest-inventory.md`
+- Create: `config/harvest-workspaces.json`
+- Modify: `scripts/omp-session-harvester.py`
+- Modify: `tests/test-omp-session-harvester.sh`
+- Update: `plans/omp-consolidation-ledger.json`
+- Update: `plans/harvest-inventory.md`
 
 ## Implementation Steps
-1. **Build `scripts/omp-session-harvester.py`:**
-   - Define session scanner iterating over `os.path.expanduser("~/.omp/agent/sessions")`.
-   - Implement regex scanners for tool blocks: Python (`import openpyxl`, `import docx`, `def `), PowerShell (`New-Object -ComObject`, `param(`), Bash scripts.
-   - Define keyword sanitizer checking against a list of sensitive terms.
-   - Implement structured output writer updating `plans/omp-consolidation-ledger.json`.
-2. **Implement Interactive CLI Menu:**
-   - Display:
-     1. Scan sessions and update ledger
-     2. Show top duplicated utility scripts
-     3. Export harvested snippets to temporary staging directory
-     4. Exit
-3. **Write Test Suite (`tests/test-omp-session-harvester.sh`):**
-   - Creates mock session `.jsonl` containing sample tool creation.
-   - Runs `python scripts/omp-session-harvester.py --scan` and asserts extracted artifact in ledger.
+1. Author `config/harvest-workspaces.json` with verified roots, Tier A/B manifests, and Tier C ignore patterns.
+2. Refactor `scripts/omp-session-harvester.py` with multi-source parsers (OMP JSONL, Claude JSONL, `history.db`, config-dir scanner), unique `eval` keys, hardened sanitizer, `--diff-global`, `--next`, `--verify-ledger`, and interactive menu options.
+3. Expand `tests/test-omp-session-harvester.sh` to cover multi-`eval`, `edit`, Claude `tool_use`, mock `history.db`, project `.omp`/`.claude` diffing, secret scrubbing, and bare-filename `--ledger`/`--report` paths.
+4. Run live `--scan --diff-global` and update `plans/omp-consolidation-ledger.json` & `plans/harvest-inventory.md`.
 
 ## Success Criteria
-- [ ] `tests/test-omp-session-harvester.sh` passes with exit code `0`.
-- [ ] Running scanner across live `~/.omp/agent/sessions` successfully indexes all 55 sessions.
-- [ ] `plans/omp-consolidation-ledger.json` contains full session-to-tool mapping.
+- [ ] `"C:/Program Files/Git/bin/bash.exe" tests/test-omp-session-harvester.sh` exits 0 with all assertions passing.
+- [ ] Live `python scripts/omp-session-harvester.py --scan --diff-global` indexes OMP, Claude, `history.db`, and curated workspaces with zero leaked tokens or customer identifiers.
+- [ ] `python scripts/omp-session-harvester.py --next` outputs deterministic multi-session continuation state.

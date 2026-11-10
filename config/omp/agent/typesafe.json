@@ -1,0 +1,7 @@
+{
+  "typesafe": {
+    "enabled": true,
+    "projects": ["*"],
+    "excludeProjects": []
+  }
+}

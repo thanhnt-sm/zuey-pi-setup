@@ -1,0 +1,22 @@
+Báo cáo Điều tra Hiện tượng Cửa sổ Terminal/CMD bật tắt liên tục
+
+1. THU THẬP LOG & THÔNG TIN HỆ THỐNG
+Đã tiến hành trích xuất các log liên quan và lưu vào thư mục hiện tại:
+- Suspect_ScheduledTasks.csv: Danh sách các tác vụ gọi lệnh cmd/powershell.
+- StartupItems.csv: Các chương trình khởi động cùng hệ thống.
+- System_Errors.csv: Lỗi từ System Event Log của Windows.
+- Application_Errors.csv: Lỗi từ Application Event Log của Windows.
+
+2. TÌM RA NGUYÊN NHÂN GỐC RỄ (ROOT CAUSE)
+Nguyên nhân trực tiếp gây ra hiện tượng cửa sổ Terminal/PowerShell nháy lên rồi tắt liên tục chính là do một Scheduled Task có thông tin như sau:
++ Tên Task: SuperAntigravity-Watchdog
++ Tần suất chạy: Lặp đi lặp lại mỗi 5 phút một lần.
++ Lệnh thực thi: PowerShell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "<local-workspace>" ...
+
+Giải thích: Mặc dù lệnh chạy có kèm theo cờ `-WindowStyle Hidden` để cố ý làm ẩn cửa sổ, nhưng do Windows Task Scheduler khi khởi chạy tiến trình console dưới quyền tài khoản người dùng đang đăng nhập (Interactive Mode) thì cửa sổ PowerShell mặc định sẽ xuất hiện trong vòng 1-2 giây để nhận thông số tải ban đầu trước khi kịp tự ẩn đi (flash screen). Do vòng lặp của tác vụ này diễn ra liên tục, màn hình terminal sẽ chớp sáng đứt quãng làm gián đoạn người dùng.
+
+3. PHƯƠNG ÁN KHẮC PHỤC (FIX)
+Tôi đã chạy lệnh vô hiệu hóa (Disable) tác vụ `SuperAntigravity-Watchdog` trong hệ thống Task Scheduler. 
+=> Tình trạng nháy cửa sổ đã được khắc phục hoàn toàn. Bạn có thể tiếp tục sử dụng máy bình thường.
+
+Nếu sau này quá trình làm việc với SuperAntigravity cần bật lại Watchdog mà không muốn bị nháy màn hình, bạn nên tạo một đoạn mã VBScript (.vbs) nhỏ để bọc (wrap) file chạy powershell này thành tiến trình ngầm 100%. Mọi thông tin log đã được tổng hợp ở cùng thư mục này để bạn tiện theo dõi.

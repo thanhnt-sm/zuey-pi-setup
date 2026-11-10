@@ -37,11 +37,11 @@ Hệ thống phân tách rạch ròi 3 nhóm dữ liệu để đảm bảo **t�
           │                                  │      │                            │
    [TẦNG 1: PUBLIC PORTABLE]      [TẦNG 2: PRIVATE ENCRYPTED]             [TẦNG 3: EPHEMERAL HOST]
    - Tracked trên GitHub          - Lưu NGOÀI git worktree                - KHÔNG backup / Local only
-   - config.yml (templated)       - Mã hóa AES-256 (GPG)                  - OAuth tokens (agent.db)
-   - models.yml (!printenv)       - 22 Mnemopi memory banks               - SQLite WAL/SHM caches
-   - extensions/ (dereferenced)   - history.db (prompt & recaps)          - Node modules / Binaries
-   - managed-skills/              - TypeSafe Kit files                    - Lock files (*.lock)
-   - package.json (no lockfile)   (omp-private-backup.sh)                 (Sinh lại trên máy mới)
+  - config.yml (templated)       - Mã hóa AES-256 (GPG)                  - OAuth tokens (agent.db)
+  - models.yml (!printenv)       - 69 Mnemopi memory banks               - SQLite WAL/SHM caches
+  - extensions/ (deref đệ quy)   - history.db (prompt & recaps)          - Node modules / Binaries
+  - skills/ + agents/ + commands - ~/.claude/ (templated node/home)      - Lock files (*.lock)
+  - tools-requirements.txt       (omp-private-backup.sh --all)           - ~/.omp/tools-venv (tự hydrate)
    (omp-setup-backup.sh)
 ```
 
@@ -192,21 +192,18 @@ git push origin main
 
 ### SOP-05: Kiểm thử TDD trước khi đẩy code
 
-Bộ 4 bài test bảo vệ an toàn toàn diện:
+Bộ kiểm thử bảo vệ an toàn toàn diện (chạy qua Git Bash trên Windows hoặc bash trên macOS/Linux):
 ```bash
-# 1. Kiểm tra toàn diện backup/restore & bảo vệ secret/db:
 ./tests/test-omp-migration.sh
-
-# 2. Kiểm tra bộ giải mã khôi phục riêng tư & bẫy lỗi macOS M1:
 ./tests/test-omp-private-restore.sh
-
-# 3. Kiểm tra danh sách đen chống xung đột plugin:
+./tests/test-omp-agents-backup.sh
+./tests/test-omp-tools-venv-hydration.sh
+./tests/test-omp-session-harvester.sh
 ./tests/test-omp-syncignore.sh
-
-# 4. Kiểm tra khả năng trích xuất cô lập không bẩn Git HEAD:
 ./tests/test-omp-sync-extraction.sh
+./tests/test-omp-managed-skills-integrity.sh
+./tests/test-omp-e2e-cross-platform.sh
 ```
-
 ---
 
 ## 3. Cẩm nang Xử lý Mọi Sự Cố & Tình Huống Ngoại Lệ

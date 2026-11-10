@@ -1,65 +1,52 @@
-# Phase 1: Backup Pipeline & Agent Hydration Upgrades
+---
+phase: 2
+title: "Backup Pipeline, Recursive Deref, Tier A/B Promotion & Cross-OS Hydration"
+status: pending
+priority: P1
+effort: "4h"
+dependencies: [1]
+---
+
+# Phase 2: Backup Pipeline, Recursive Deref, Tier A/B Promotion & Cross-OS Hydration
 
 ## Overview
-Expand the public portable backup (`scripts/omp-setup-backup.sh`), restore script (`scripts/omp-setup-restore.sh`), and private encrypted backup (`scripts/omp-private-backup.sh` / `scripts/omp-private-restore.sh`) to ensure complete asset parity across Windows and macOS workstations.
+Upgrade `omp-setup-backup.sh`, `omp-setup-restore.sh`, `omp-private-backup.sh`, `omp-private-restore.sh`, and `omp-sync-upstream.sh` for full Windows + macOS cross-OS parity, promote curated Tier A/B non-suite assets into `config/omp/agent/`, and verify with automated bash tests.
 
 ## Requirements
-- **Functional Requirements:**
-  1. `omp-setup-backup.sh` must include `~/.omp/agent/agents/*.md` into `config/omp/agent/agents/` and tarball.
-  2. `omp-setup-backup.sh` must include `~/.omp/agent/skills/` (if non-empty) and `~/.omp/agent/managed-skills/` including all code files (`scripts/`, `references/`, `tests/`), dereferencing symlinks.
-  3. `omp-setup-backup.sh` must generate `config/omp/agent/tools-requirements.txt` listing standard dependencies for harvested tools (`openpyxl`, `python-docx`, `defusedxml`, `extract-msg`, `markdown`).
-  4. `omp-setup-restore.sh` must detect whether `~/.omp/tools-venv` exists. If missing, it creates the venv (via `uv venv` or `python3 -m venv`) and installs `tools-requirements.txt` unless `--no-install` is specified.
-  5. `omp-private-backup.sh` must accept `--claude` (or default with `--all`) to snapshot `~/.claude/` (skills, agents, hooks, workflows, settings sanitized) into the GPG archive.
-  6. `omp-private-restore.sh` must restore `~/.claude/` components cleanly.
-- **Non-Functional Requirements:**
-  - Zero SQLite leaks into public repo.
-  - Zero proprietary project names or internal company domain names in public portable archives.
-  - Full backward compatibility with existing test suites (`test-omp-migration.sh`, `test-omp-private-restore.sh`).
+- **Functional:**
+  1. Add `.gitattributes` enforcing LF line endings for `*.sh`, `*.yml`, `*.example`, `*.py`, `*.ts`, `*.md`, `*.json`.
+  2. Upgrade `scripts/omp-setup-backup.sh`:
+     - Recursive relative-import closure in `deref_extension_shim()` (fixes missed `../tools/jev-paired-*` imported by `src/evaluation-host.ts`).
+     - Stage & `cp -rL` dereference `agent/skills/`, `agent/skills-optin/`, `agent/agents/`, `agent/commands/`, `agent/rules/`, `agent/hooks/`, `agent/tools/`, `agent/managed-skills/`, `agent/typesafe.json`, `agent/tools-requirements.txt`, excluding `__pycache__/`, `*.pyc`, `.venv/`, `node_modules/`.
+     - Enforce hard-fail gates for leftover symlinks (`find -type l`), SQLite `*.db*`, secrets, and hardcoded `C:/Users/`/`D:/` paths inside portable skill/agent/extension code.
+     - Normalize `-o` Windows drive colons via `cygpath -u` / `--force-local` before `tar`.
+  3. Upgrade `scripts/omp-setup-restore.sh`:
+     - Restore all new `agent/` subdirectories cleanly; escape `TARGET_SHELL` safely in `sed` (`&`, `|`, `\`).
+     - Strip `\r` on restored `.sh`/`.env*` and `chmod +x` executable scripts.
+     - Auto-create & hydrate `~/.omp/tools-venv` from `agent/tools-requirements.txt` (skipping Microsoft Store `WindowsApps` stub; supporting `uv venv` or `python3`/`python -m venv`, disabled only with `--no-install`).
+     - Probe `~/.bun/bin/bun` & `/opt/homebrew/bin` for macOS plugin install.
+  4. Upgrade `scripts/omp-private-backup.sh` & `scripts/omp-private-restore.sh`:
+     - Add `--claude` (included in `--all`) capturing `~/.claude/` (excluding `runtime/`, `.logs/`, `cache/`, `.venv/`, `node_modules/`, `.credentials.json`, `backups/`, `shell-snapshots/`, `file-history/`, `session-env/`, `paste-cache/`, `projects/`) and `~/.claude.json` `.mcpServers`!
+     - Template `C:/Users/<user>/.claude/runtime/node/node.exe` -> `{{CLAUDE_NODE}}` and `$USER_HOME` -> `{{USER_HOME}}` on backup; rewrite dynamically to target OS `node` + `$USER_HOME` + `chmod +x` on restore.
+     - Fix Windows `sqlite3` path via `native_path` + Python `sqlite3.backup()` fallback; fix `tty` stdout `"not a tty"` bug; add Windows `tasklist`/PowerShell `omp` stop-check when `pgrep` is absent; handle Windows Gpg4win `GNUPGHOME` + `--pinentry-mode loopback`.
+  5. Fix `scripts/omp-sync-upstream.sh` macOS BSD `mktemp` `.json` template suffix.
+  6. Promote Tier A non-suite assets (`pm-ba` + rules, `windows_fix`, `ak-render` v2, `hlk-*`, `pm-email`, `team-coordination-rules.md`, existing `advisor.md`/`ck-advisor.md`), de-hardcode `windows-cleanup-pipeline`/`wiztree-cli-analyzer` `SKILL.md` paths, and package Tier B opt-in skills (`hide: true` in `skills-optin/` + `config.yml` `skills.customDirectories`).
+- **Non-Functional:**
+  - Zero changes to existing project `.omp`/`.claude` dirs on `D:`.
+  - Backward compatibility with existing migration, syncignore, sync-extraction, and private-restore tests.
 
 ## Related Code Files
-- **Modify:** `scripts/omp-setup-backup.sh`
-- **Modify:** `scripts/omp-setup-restore.sh`
-- **Modify:** `scripts/omp-private-backup.sh`
-- **Modify:** `scripts/omp-private-restore.sh`
-- **Create:** `config/omp/agent/tools-requirements.txt`
-- **Create:** `tests/test-omp-tools-venv-hydration.sh`
-- **Create:** `tests/test-omp-agents-backup.sh`
+- Create: `.gitattributes`, `config/omp/agent/tools-requirements.txt`, `tests/test-omp-agents-backup.sh`, `tests/test-omp-tools-venv-hydration.sh`
+- Create/Populate: `config/omp/agent/{skills,skills-optin,agents,commands,rules}/`
+- Modify: `scripts/omp-setup-backup.sh`, `scripts/omp-setup-restore.sh`, `scripts/omp-private-backup.sh`, `scripts/omp-private-restore.sh`, `scripts/omp-sync-upstream.sh`, `config/omp/agent/config.yml`, `config/omp/agent/managed-skills/{windows-cleanup-pipeline,wiztree-cli-analyzer}/SKILL.md`
 
 ## Implementation Steps
-1. **Update `scripts/omp-setup-backup.sh`:**
-   - Add extraction of `"$SOURCE_DIR/agent/agents"` to `"$STAGE_DIR/agent/agents"`.
-   - Add extraction of `"$SOURCE_DIR/agent/skills"` and `"$SOURCE_DIR/agent/managed-skills"` with `cp -rL` to resolve symlinks.
-   - Bundle `config/omp/agent/tools-requirements.txt` into tarball under `agent/tools-requirements.txt`.
-2. **Update `scripts/omp-setup-restore.sh`:**
-   - Add directory creation for `~/.omp/agent/agents` and copy agent markdown files.
-   - Add tool venv creation step:
-     ```bash
-     if [ "$INSTALL_DEPS" = true ] && [ -f "$TARGET_DIR/agent/tools-requirements.txt" ]; then
-       VENV_DIR="$TARGET_DIR/tools-venv"
-       if [ ! -d "$VENV_DIR" ]; then
-         echo "--> Provisioning Python tool environment: $VENV_DIR"
-         python3 -m venv "$VENV_DIR" || python -m venv "$VENV_DIR"
-       fi
-       PYTHON_EXE="$VENV_DIR/bin/python"
-       [ -f "$PYTHON_EXE" ] || PYTHON_EXE="$VENV_DIR/Scripts/python.exe"
-       if [ -f "$PYTHON_EXE" ]; then
-         echo "--> Hydrating tool dependencies via $PYTHON_EXE"
-         "$PYTHON_EXE" -m pip install -r "$TARGET_DIR/agent/tools-requirements.txt"
-       else
-         echo "Warning: Python executable not found in $VENV_DIR" >&2
-       fi
-     fi
-     ```
-3. **Update `scripts/omp-private-backup.sh` and restore script:**
-   - Add `--claude` flag to back up `~/.claude` (excluding `.venv/`, `cache/`, `logs/`).
-   - Add restore handling for Claude ecosystem directory.
-4. **Create Verification Tests:**
-   - `tests/test-omp-tools-venv-hydration.sh`: Asserts venv creation and requirements hydration under `--target-dir`.
-   - `tests/test-omp-agents-backup.sh`: Asserts agent `.md` files exist in backup output and are restored intact.
+1. Create `.gitattributes` and `config/omp/agent/tools-requirements.txt` (`openpyxl`, `python-docx`, `defusedxml`, `extract-msg`, `markdown`).
+2. Promote curated Tier A/B non-suite assets into `config/omp/agent/` and de-hardcode existing `managed-skills` paths.
+3. Upgrade all 4 backup/restore scripts + `omp-sync-upstream.sh` BSD `mktemp`.
+4. Add `tests/test-omp-agents-backup.sh` and `tests/test-omp-tools-venv-hydration.sh` and extend `test-omp-migration.sh` & `test-omp-private-restore.sh` (without weakening existing assertions).
 
 ## Success Criteria
-- [ ] `tests/test-omp-agents-backup.sh` exits `0`.
-- [ ] `tests/test-omp-tools-venv-hydration.sh` exits `0`.
-- [ ] `"$VENV_DIR/bin/python"` or `"$VENV_DIR/Scripts/python.exe"` can execute `-c "import openpyxl, docx, defusedxml, extract_msg"`.
-- [ ] `tests/test-omp-migration.sh` and `tests/test-omp-private-restore.sh` continue to pass with `0` failures.
-- [ ] `tar -tzf backups/omp-setup-portable.tar.gz` shows `agent/agents/` and `agent/tools-requirements.txt`.
+- [ ] `tests/test-omp-migration.sh`, `tests/test-omp-private-restore.sh`, `tests/test-omp-agents-backup.sh`, and `tests/test-omp-tools-venv-hydration.sh` exit 0.
+- [ ] Public staging rejects symlinks, `.db*`, tokens, and `C:/Users/`/`D:/` paths inside skills/extensions.
+- [ ] Private GPG `--all` backup + restore rewrites Windows `node.exe` paths cleanly under simulated macOS `OS_OVERRIDE=Darwin`.

@@ -105,7 +105,8 @@ edit:
     enabled: true
 skills:
   enableClaudeUser: true
-  customDirectories: []
+  customDirectories:
+    - "{{OMP_SKILLS_OPTIN_DIR}}"
 providers:
   streamFirstEventTimeoutSeconds: 300
   openai-codex:

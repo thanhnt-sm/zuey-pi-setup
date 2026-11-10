@@ -18,12 +18,16 @@ zuey-pi-setup/
 │   │   │   ├── models.yml              # apiKey literal → !printenv <PROVIDER>_API_KEY (mỗi provider 1 biến)
 │   │   │   ├── .env.example            # Tên biến môi trường (không có giá trị)
 │   │   │   ├── commandcode-models.json
-│   │   │   ├── extensions/             # Extension tự viết; shim `export … from "C:/…"` được thay bằng source thật → typesafe-planner/{index.ts,src/}. KHÔNG có orca-*, *.disabled, *.bak*
-│   │   │   └── managed-skills/         # Managed skills do agent tự học
+│   │   │   ├── extensions/             # Extension tự viết; shim dereference đệ quy (bao gồm src/ + tools/)
+│   │   │   ├── skills/                 # OMP-native Priority-100 skills (pmo-project-suite, office-doc-suite, email-intelligence-suite, system-maintenance-suite, omp-session-harvester, Tier A)
+│   │   │   ├── skills-optin/           # Tier B opt-in skills (hide: true, không làm phình prompt)
+│   │   │   ├── agents/                 # Agents (advisor, ck-advisor, pmo-*, hlk-*)
+│   │   │   ├── commands/               # Slash commands (pmo-delivery, pm-email, hlk-*)
+│   │   │   ├── rules/                  # Rulebook rules (team-coordination-rules, pm-ba-workflow, file-type-enforcement)
+│   │   │   ├── tools-requirements.txt  # Python dependencies cho ~/.omp/tools-venv
+│   │   │   └── managed-skills/         # Autolearn skills
 │   │   └── plugins/
-│   │       ├── package.json            # Plugin đang cài trên máy thật
-│   │       ├── omp-plugins.lock.json
-│   │       └── bun.lock
+│   │       └── package.json            # Plugin đang cài trên máy thật (không ship lockfile chéo OS)
 │   └── omp-upstream/                   # Overlay port từ upstream zuey-pi (omp-sync-upstream.sh sở hữu)
 │       ├── .omp-syncignore             # Danh sách chặn plugin xung đột (pi-lens, pi-advisor-flow,...)
 │       ├── agent/
@@ -99,10 +103,11 @@ OMP_BACKUP_PASSPHRASE_FILE=~/.omp-backup-pass ./scripts/omp-private-backup.sh --
 
 | Cờ | Nội dung | Ghi chú |
 | :--- | :--- | :--- |
-| `--memory` | `~/.omp/agent/memories/mnemopi/banks/*/mnemopi.db` | Long-term memory theo workspace (máy hiện tại: 22 bank, 76 MB kể cả WAL) |
+| `--memory` | `~/.omp/agent/memories/mnemopi/banks/*/mnemopi.db` | Long-term memory theo workspace (máy hiện tại: 69 bank) |
 | `--history` | `~/.omp/agent/history.db` | Lịch sử prompt, tiêu đề/recap session |
-| `--typesafe-kit` | `~/.claude/mcp/typesafe/`, `~/.claude/hooks/lib/typesafe-enabled-resolver.cjs`, `~/.claude/.ck.json` | Code ClaudeKit mà `typesafe-planner.ts` `require()`; có license nên không public |
-| `--all` | Cả ba | |
+| `--typesafe-kit` | `~/.claude/mcp/typesafe/`, `~/.claude/hooks/lib/typesafe-enabled-resolver.cjs`, `~/.claude/.ck.json` | Code ClaudeKit mà `typesafe-planner.ts` `require()` |
+| `--claude` | Toàn bộ `~/.claude/` sạch (lọc `runtime/`, `.logs/`, `cache/`, `.venv/`, `.credentials.json`) + `~/.claude.json` `mcpServers` | Tự template `{{CLAUDE_NODE}}` / `{{USER_HOME}}` để chạy chéo Windows ↔ macOS |
+| `--all` | Tất cả mục trên | Khuyến nghị dùng `--all` khi chuyển sang máy mới |
 
 SQLite được chụp bằng `sqlite3 .backup` hoặc `VACUUM INTO` (qua bun/node), không dùng `cp`, vì omp mở các DB này ở chế độ WAL. Copy thô có thể bị rách hoặc thiếu dữ liệu nằm trong WAL.
 
@@ -144,7 +149,7 @@ Chỉ cần chạy một lệnh duy nhất:
 3. Copy snapshot (kể cả dotfile như `.env.example`) vào `~/.omp/`.
 4. Áp overlay upstream: chỉ **thêm** `APPEND_SYSTEM.md`/extension/plugin dep còn thiếu, không ghi đè file đã có. Bỏ qua bằng `--no-upstream`.
 5. Sinh `~/.omp/agent/.env` từ `.env.example` nếu chưa có.
-6. Chạy `bun install` trong `~/.omp/plugins` (bỏ qua bằng `--no-install`).
+6. Cài đặt plugin trong `~/.omp/plugins` (`bun install`) và tự tạo/cài `~/.omp/tools-venv` từ `agent/tools-requirements.txt` (bỏ qua bằng `--no-install`).
 
 > Trên máy đang dùng, **không** chạy restore để "đồng bộ": `config.yml`/`models.yml` của máy thật thường mới hơn snapshot. Hướng đúng là máy thật → repo (backup).
 
