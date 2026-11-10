@@ -32,7 +32,7 @@ Hardens and extends the V2 OMP consolidation architecture based on the V3 consen
 | Phase | Name | Status |
 |-------|------|--------|
 | 1 | [Dirty-Tree Repair Leak Scrub and Standalone Harvester](./phase-01-dirty-tree-repair-leak-scrub-and-standalone-harvester.md) | Completed |
-| 2 | [Incremental Watermark Loop and Thin OMP Extension](./phase-02-incremental-watermark-loop-and-thin-omp-extension.md) | Pending |
+| 2 | [Incremental Watermark Loop and Thin OMP Extension](./phase-02-incremental-watermark-loop-and-thin-omp-extension.md) | Completed |
 | 3 | [Global Claude Parity and Opt-In Local Reference Linker](./phase-03-global-claude-parity-and-opt-in-local-reference-linker.md) | Pending |
 | 4 | [Cross-OS PDF MPP Fallback and Private Archive Hygiene](./phase-04-cross-os-pdf-mpp-fallback-and-private-archive-hygiene.md) | Pending |
 | 5 | [Cross-OS E2E Validation Live Sync and Release](./phase-05-cross-os-e2e-validation-live-sync-and-release.md) | Pending |

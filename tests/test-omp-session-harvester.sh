@@ -213,4 +213,123 @@ test ! -d "$ISOLATED_CWD/plans" || { echo "FAIL: standalone harvest_cli.py creat
 # (e) Wrapper scripts/omp-session-harvester.py delegates to harvester_core
 grep -q "harvester_core" "$ROOT/scripts/omp-session-harvester.py" || { echo "FAIL: scripts/omp-session-harvester.py must delegate to harvester_core"; exit 1; }
 
-echo "[v] PASS: test-omp-session-harvester.sh V2+V3 passed all assertions."
+# Phase 2 V3 TDD Assertions: Incremental Watermarks, Rehydration, Extract, Advisors, Container Symlinks & Drift
+echo "[*] Testing Phase 2 incremental watermarks, rehydration, --extract, --include-advisors, container symlinks & DRIFT_DETECTED..."
+P2_SESS="$TMP_DIR/p2_sessions/ws"
+P2_LEDGER="$TMP_DIR/p2-ledger.json"
+P2_REPORT="$TMP_DIR/p2-report.md"
+P2_CFG="$TMP_DIR/p2-cfg.json"
+P2_WORK="$TMP_DIR/p2_work"
+P2_PROJ="$P2_WORK/proj_a"
+P2_RULES_TGT="$TMP_DIR/p2_global_rules"
+mkdir -p "$P2_SESS" "$P2_PROJ/.omp" "$P2_RULES_TGT"
+echo "# Rule" > "$P2_RULES_TGT/rule1.md"
+
+# Create container-level symlink/junction at <proj>/.omp/rules -> $P2_RULES_TGT
+if command -v cygpath >/dev/null 2>&1; then
+  cmd.exe //c mklink //J "$(cygpath -w "$P2_PROJ/.omp/rules")" "$(cygpath -w "$P2_RULES_TGT")" >/dev/null
+else
+  ln -s "$P2_RULES_TGT" "$P2_PROJ/.omp/rules"
+fi
+
+cat << EOF > "$P2_CFG"
+{
+  "scanRoots": ["$WIN_TMP/p2_work"],
+  "additionalWorkspaces": [],
+  "excludeDirNames": [".git", "node_modules"],
+  "tierCExcludeGlobs": []
+}
+EOF
+
+# Session with >280-char script carrying a trailing marker well beyond 200-char snippet preview
+cat << 'EOF' > "$P2_SESS/s1.jsonl"
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"write","arguments":{"path":"scripts/long_util.py","content":"import math\ndef compute_long_pipeline(items):\n    total = 0\n    for idx, val in enumerate(items):\n        total += (idx + 1) * float(val)\n    # padding commentary ensuring total payload easily exceeds two hundred chars\n    return round(total, 4)  # END_OF_FULL_SCRIPT_MARKER_V3\n"}}]}}
+EOF
+cat << 'EOF' > "$P2_SESS/__advisor_check.jsonl"
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"write","arguments":{"path":"scripts/advisor_probe.py","content":"def verify_advisor_code(items):\n    # advisor verification helper script beyond length threshold\n    return [x for x in items if x is not None]\n"}}]}}
+EOF
+
+# 1) First scan: populates fileWatermarks + clusterIndex; skips __advisor_check.jsonl by default
+python "$ROOT/scripts/omp-session-harvester.py" --scan --diff-global --no-local-config \
+  --sessions-dir "$WIN_TMP/p2_sessions" --claude-projects-dir "" --history-db "" \
+  --config "$WIN_TMP/p2-cfg.json" --ledger "$WIN_TMP/p2-ledger.json" --report "$WIN_TMP/p2-report.md" >/dev/null
+
+LONG_HASH="$(python -c "
+import json
+d = json.load(open('$WIN_TMP/p2-ledger.json', encoding='utf-8'))
+s = d['summary']
+assert s['ompSessionsScouted'] == 1, s
+assert s['ompAdvisorsSkipped'] == 1, s
+assert len(d.get('fileWatermarks', {})) == 1, d.get('fileWatermarks')
+ci = d.get('clusterIndex', {})
+assert len(ci) == 1, ci
+# Container-level junction/symlink at .omp/rules must be detected in global diff summary or deltas
+assert d.get('globalDiffSummary', {}).get('containerLinksCount', 0) >= 1, d.get('globalDiffSummary')
+print(next(iter(ci.keys())))
+")"
+
+# 2) Second scan (unchanged): must skip unchanged .jsonl while rehydrating identical counts & clusters
+python "$ROOT/scripts/omp-session-harvester.py" --scan --diff-global --no-local-config \
+  --sessions-dir "$WIN_TMP/p2_sessions" --claude-projects-dir "" --history-db "" \
+  --config "$WIN_TMP/p2-cfg.json" --ledger "$WIN_TMP/p2-ledger.json" --report "$WIN_TMP/p2-report.md" >/dev/null
+python -c "
+import json
+d = json.load(open('$WIN_TMP/p2-ledger.json', encoding='utf-8'))
+s = d['summary']
+assert s.get('skippedUnchanged', 0) >= 1, f'Expected skippedUnchanged >= 1, got {s}'
+assert s['harvestedArtifactsCount'] == 1, f'Expected rehydrated count 1, got {s}'
+assert s['uniqueCodeClusters'] == 1, f'Expected rehydrated uniqueCodeClusters 1, got {s}'
+assert d['suites']['general_utilities']['harvestedCount'] == 1, d['suites']
+"
+
+# 3) --full-rescan forces re-parse (skippedUnchanged == 0)
+python "$ROOT/scripts/omp-session-harvester.py" --scan --full-rescan --no-local-config \
+  --sessions-dir "$WIN_TMP/p2_sessions" --claude-projects-dir "" --history-db "" \
+  --config "$WIN_TMP/p2-cfg.json" --ledger "$WIN_TMP/p2-ledger.json" --report "$WIN_TMP/p2-report.md" >/dev/null
+python -c "
+import json
+d = json.load(open('$WIN_TMP/p2-ledger.json', encoding='utf-8'))
+assert d['summary'].get('skippedUnchanged', -1) == 0, d['summary']
+"
+
+# 4) --extract <hash> --out <dir> recovers complete original script beyond 200-char preview
+EXTRACT_OUT="$TMP_DIR/extracted"
+python "$ROOT/scripts/omp-session-harvester.py" --extract "$LONG_HASH" --out "$WIN_TMP/extracted" \
+  --no-local-config --sessions-dir "$WIN_TMP/p2_sessions" --ledger "$WIN_TMP/p2-ledger.json" >/dev/null
+grep -q "END_OF_FULL_SCRIPT_MARKER_V3" "$EXTRACT_OUT"/*.py
+
+# 5) --include-advisors indexes __advisor*.jsonl separately
+python "$ROOT/scripts/omp-session-harvester.py" --scan --include-advisors --full-rescan --no-local-config \
+  --sessions-dir "$WIN_TMP/p2_sessions" --claude-projects-dir "" --history-db "" \
+  --config "$WIN_TMP/p2-cfg.json" --ledger "$WIN_TMP/p2-ledger.json" --report "$WIN_TMP/p2-report.md" >/dev/null
+python -c "
+import json
+d = json.load(open('$WIN_TMP/p2-ledger.json', encoding='utf-8'))
+s = d['summary']
+assert s['ompSessionsScouted'] == 1, s
+assert s.get('ompAdvisorsIncluded', 0) == 1, s
+assert s['harvestedArtifactsCount'] == 2, s
+"
+
+# 6) COMPLETED -> DRIFT_DETECTED when new unpromoted cluster appears
+python -c "
+import json
+d = json.load(open('$WIN_TMP/p2-ledger.json', encoding='utf-8'))
+d['status'] = 'COMPLETED'
+d['promotedHashes'] = {h: {'suite': 'general_utilities', 'promotedAt': '2026-11-10T00:00:00Z'} for h in d['clusterIndex'].keys()}
+json.dump(d, open('$WIN_TMP/p2-ledger.json', 'w', encoding='utf-8'), indent=2)
+"
+cat << 'EOF' > "$P2_SESS/s2.jsonl"
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"write","arguments":{"path":"scripts/new_drift.py","content":"import openpyxl\ndef drift_trigger_export(rows):\n    wb = openpyxl.Workbook()\n    ws = wb.active\n    ws.append(rows)\n    return wb\n"}}]}}
+EOF
+python "$ROOT/scripts/omp-session-harvester.py" --scan --no-local-config \
+  --sessions-dir "$WIN_TMP/p2_sessions" --claude-projects-dir "" --history-db "" \
+  --config "$WIN_TMP/p2-cfg.json" --ledger "$WIN_TMP/p2-ledger.json" --report "$WIN_TMP/p2-report.md" >/dev/null
+python -c "
+import json
+d = json.load(open('$WIN_TMP/p2-ledger.json', encoding='utf-8'))
+assert d['status'] == 'DRIFT_DETECTED', f'Expected DRIFT_DETECTED, got {d[\"status\"]}'
+"
+python "$ROOT/scripts/omp-session-harvester.py" --next --no-local-config --ledger "$WIN_TMP/p2-ledger.json" | grep -q "DRIFT_DETECTED"
+
+echo "[v] PASS: test-omp-session-harvester.sh V2+V3 (incl. Phase 2 incremental loop) passed all assertions."

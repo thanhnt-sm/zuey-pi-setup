@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-harvester_core.py — Canonical Multi-Source OMP & Claude Harvester + Global Diff Engine
+harvester_core.py — Canonical Multi-Source OMP & Claude Harvester + Incremental Loop Engine
 
 Sources covered (read-only):
 1. OMP transcripts (~/.omp/agent/sessions/**/*.jsonl) — write, edit, indexed eval, bash heredocs/inline
@@ -21,6 +21,7 @@ import re
 import sqlite3
 import stat
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -75,6 +76,7 @@ SENSITIVE_PATTERNS: List[Tuple[re.Pattern[str], Any]] = [
 ]
 
 _WIN_DRIVE_RE = re.compile(r"[A-Za-z]:[\\/][^\"'\s`<>|]+")
+_POSIX_SYS_PREFIXES = ("/tmp/", "/var/", "/usr/", "/opt/", "/etc/", "/bin/", "/home/", "/users/", "/mnt/", "/dev/", "/proc/", "/sys/")
 
 
 def _private_terms_pattern(config: Optional[Dict[str, Any]] = None, allow_local: bool = True) -> Optional[re.Pattern[str]]:
@@ -107,6 +109,10 @@ def sanitize_path(path_str: str, priv_pat: Optional[re.Pattern[str]] = None) -> 
         parts = [p for p in norm.split("/") if p]
         if len(parts) >= 2:
             norm = "~/" + "/".join(parts[2:])
+    elif norm.startswith("/") and not norm.lower().startswith(_POSIX_SYS_PREFIXES):
+        parts = [p for p in norm.split("/") if p]
+        if len(parts) >= 3:
+            norm = "<local-workspace>/" + "/".join(parts[-2:])
     if priv_pat is not None:
         norm = priv_pat.sub("[PROJECT_CODE]", norm)
     return norm
@@ -187,6 +193,19 @@ def _extract_bash_scripts(cmd: str) -> List[Tuple[str, str]]:
         if len(body) > 120:
             found.append((f"inline_{runtime}_{compute_code_hash(body)[:8]}", body))
     return found
+
+
+def _read_bytes_with_retry(path: str, retries: int = 3, backoff_sec: float = 0.05) -> Tuple[bool, bytes]:
+    for attempt in range(retries):
+        try:
+            with open(path, "rb") as f:
+                return True, f.read()
+        except (PermissionError, OSError) as exc:
+            if attempt + 1 < retries:
+                time.sleep(backoff_sec)
+            else:
+                print(f"[!] Warning reading locked/unreadable file {path}: {exc}", file=sys.stderr)
+    return False, b""
 
 
 def find_repo_root(start: Optional[Path] = None) -> Optional[Path]:
@@ -298,6 +317,106 @@ def _merge_configs(base: Dict[str, Any], local: Dict[str, Any]) -> Dict[str, Any
     return merged
 
 
+def _extract_omp_code_entries(lines: List[str]) -> Tuple[int, Dict[str, Tuple[str, str, int, str]]]:
+    """Return (tool_call_count, {tool_key: (tool_kind, body, entry_index, target_path)})."""
+    captured: Dict[str, Tuple[str, str, int, str]] = {}
+    tool_calls = 0
+    eval_counter = 0
+    edit_counter = 0
+    for entry_idx, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = entry.get("message")
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content", [])
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "toolCall":
+                continue
+            tool_calls += 1
+            name = block.get("name", "")
+            args = block.get("arguments", {})
+            if not isinstance(args, dict):
+                continue
+            if name == "write":
+                tp = str(args.get("path", "")).strip()
+                body = str(args.get("content", ""))
+                if tp and len(body) > 100 and _is_code_or_skill_path(tp):
+                    captured[tp] = ("write", body, entry_idx, tp)
+            elif name == "edit":
+                tp = str(args.get("path", "")).strip()
+                new_txt = str(args.get("newText") or args.get("new_string") or args.get("input") or "")
+                if tp and len(new_txt) > 80 and _is_code_or_skill_path(tp):
+                    edit_counter += 1
+                    tk = f"{tp}#edit{edit_counter}"
+                    captured[tk] = ("edit", new_txt, entry_idx, tk)
+            elif name == "eval":
+                lang = str(args.get("language", "py") or "py")
+                body = str(args.get("code", ""))
+                if len(body) > 100 and any(kw in body for kw in EVAL_CODE_INDICATORS):
+                    eval_counter += 1
+                    h8 = compute_code_hash(body)[:8]
+                    tk = f"eval_{lang}_{eval_counter}_{h8}"
+                    captured[tk] = ("eval", body, entry_idx, tk)
+            elif name == "bash":
+                cmd = str(args.get("command", ""))
+                for tp, body in _extract_bash_scripts(cmd):
+                    captured[tp] = ("bash", body, entry_idx, tp)
+    return tool_calls, captured
+
+
+def _extract_claude_code_entries(lines: List[str]) -> Tuple[int, Dict[str, Tuple[str, str, int, str]]]:
+    captured: Dict[str, Tuple[str, str, int, str]] = {}
+    tool_calls = 0
+    edit_counter = 0
+    for entry_idx, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = entry.get("message")
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content", [])
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            tool_calls += 1
+            name = block.get("name", "")
+            inp = block.get("input", {})
+            if not isinstance(inp, dict):
+                continue
+            if name == "Write":
+                tp = str(inp.get("file_path", "")).strip()
+                body = str(inp.get("content", ""))
+                if tp and len(body) > 100 and _is_code_or_skill_path(tp):
+                    captured[tp] = ("Write", body, entry_idx, tp)
+            elif name == "Edit":
+                tp = str(inp.get("file_path", "")).strip()
+                new_txt = str(inp.get("new_string", ""))
+                if tp and len(new_txt) > 80 and _is_code_or_skill_path(tp):
+                    edit_counter += 1
+                    tk = f"{tp}#edit{edit_counter}"
+                    captured[tk] = ("Edit", new_txt, entry_idx, tk)
+            elif name == "Bash":
+                cmd = str(inp.get("command", ""))
+                for tp, body in _extract_bash_scripts(cmd):
+                    captured[tp] = ("Bash", body, entry_idx, tp)
+    return tool_calls, captured
+
+
 class SessionHarvester:
     def __init__(
         self,
@@ -308,6 +427,8 @@ class SessionHarvester:
         config_path: Optional[str] = None,
         ledger_path: Optional[str] = None,
         no_local_config: bool = False,
+        full_rescan: bool = False,
+        include_advisors: bool = False,
     ):
         self.sessions_dir = (
             os.path.expanduser("~/.omp/agent/sessions")
@@ -332,11 +453,16 @@ class SessionHarvester:
         def_cfg, def_ledger, _ = resolve_default_paths()
         self.config_path = config_path if config_path is not None else def_cfg
         self.no_local_config = no_local_config
+        self.full_rescan = full_rescan
+        self.include_advisors = include_advisors
         self.config = self._load_config()
         self.priv_pat = _private_terms_pattern(self.config, allow_local=not self.no_local_config)
         self.ledger_path = ledger_path if ledger_path is not None else def_ledger
         self.harvested_artifacts: List[Dict[str, Any]] = []
         self.duplicate_groups: Dict[str, List[Dict[str, Any]]] = {}
+        self.cluster_index: Dict[str, List[Dict[str, Any]]] = {}
+        self.file_watermarks: Dict[str, Dict[str, Any]] = {}
+        self._existing_watermarks: Dict[str, Dict[str, Any]] = self._load_existing_watermarks()
         self.history_summary: Dict[str, Any] = {}
         self.global_diff_report: Dict[str, Any] = {}
         self.session_stats: Dict[str, int] = {
@@ -344,13 +470,26 @@ class SessionHarvester:
             "omp_top_level": 0,
             "omp_subagents": 0,
             "omp_advisors_skipped": 0,
+            "omp_advisors_included": 0,
             "claude_sessions": 0,
             "claude_top_level": 0,
             "claude_subagents": 0,
             "claude_history_entries": 0,
             "total_tool_calls": 0,
             "extracted_scripts": 0,
+            "skipped_unchanged": 0,
         }
+
+    def _load_existing_watermarks(self) -> Dict[str, Dict[str, Any]]:
+        if self.ledger_path and os.path.exists(self.ledger_path):
+            try:
+                data = json.loads(Path(self.ledger_path).read_text(encoding="utf-8"))
+                wms = data.get("fileWatermarks", {})
+                if isinstance(wms, dict):
+                    return wms
+            except Exception:
+                pass
+        return {}
 
     def _load_config(self) -> Dict[str, Any]:
         base: Dict[str, Any] = {}
@@ -373,14 +512,27 @@ class SessionHarvester:
                     print(f"[!] Warning reading local config {local_cfg}: {e}", file=sys.stderr)
         return base
 
-    def _record_artifact(self, session_rel: str, tool_kind: str, target_path: str, code_content: str, source_kind: str = "omp") -> None:
+    def _build_descriptor(
+        self,
+        session_rel: str,
+        tool_kind: str,
+        target_path: str,
+        code_content: str,
+        source_kind: str,
+        entry_idx: Optional[int],
+        tool_key: str,
+    ) -> Dict[str, Any]:
         c_hash = compute_code_hash(code_content)
         suite = classify_snippet(code_content, target_path)
         sanitized = sanitize_text(code_content, priv_pat=self.priv_pat)
-        artifact = {
+        norm_rel = session_rel.replace("\\", "/")
+        return {
             "source": source_kind,
             "session": sanitize_path(session_rel, priv_pat=self.priv_pat),
+            "sessionRel": norm_rel,
             "tool": tool_kind,
+            "toolKey": tool_key,
+            "entryIndex": entry_idx,
             "target": sanitize_path(target_path, priv_pat=self.priv_pat),
             "suite": suite,
             "hash": c_hash,
@@ -388,92 +540,114 @@ class SessionHarvester:
             "bytes": len(code_content),
             "snippet_preview": sanitized[:200].replace("\n", " ") + ("..." if len(sanitized) > 200 else ""),
         }
+
+    def _register_artifact(self, artifact: Dict[str, Any]) -> None:
+        c_hash = artifact["hash"]
         self.harvested_artifacts.append(artifact)
         self.duplicate_groups.setdefault(c_hash, []).append(artifact)
+        if artifact.get("entryIndex") is not None and artifact.get("sessionRel"):
+            loc = {
+                "source": artifact.get("source", "omp"),
+                "session": artifact.get("session", ""),
+                "sessionRel": artifact.get("sessionRel", ""),
+                "entryIndex": artifact.get("entryIndex"),
+                "toolKey": artifact.get("toolKey", ""),
+                "target": artifact.get("target", ""),
+                "suite": artifact.get("suite", "general_utilities"),
+            }
+            bucket = self.cluster_index.setdefault(c_hash, [])
+            if len(bucket) < 5:
+                bucket.append(loc)
         self.session_stats["extracted_scripts"] += 1
+
+    def _rehydrate_watermark(self, wm_key: str, wm: Dict[str, Any]) -> None:
+        self.session_stats["skipped_unchanged"] += 1
+        self.session_stats["total_tool_calls"] += int(wm.get("tool_calls", 0))
+        arts = wm.get("artifacts", [])
+        for art in arts:
+            if isinstance(art, dict) and art.get("hash"):
+                self._register_artifact(dict(art))
+        self.file_watermarks[wm_key] = wm
 
     def scan_omp_sessions(self) -> None:
         if not self.sessions_dir or not os.path.exists(self.sessions_dir):
             return
-        all_jsonl = glob.glob(os.path.join(self.sessions_dir, "**", "*.jsonl"), recursive=True)
-        session_files = [
+        all_jsonl = sorted(glob.glob(os.path.join(self.sessions_dir, "**", "*.jsonl"), recursive=True))
+        primary_files = [
             sf for sf in all_jsonl
             if not os.path.basename(sf).startswith(("__advisor", ".__advisor"))
         ]
-        advisors_skipped = len(all_jsonl) - len(session_files)
+        advisor_files = [
+            sf for sf in all_jsonl
+            if os.path.basename(sf).startswith(("__advisor", ".__advisor"))
+        ]
+        advisors_skipped = 0 if self.include_advisors else len(advisor_files)
+        advisors_included = len(advisor_files) if self.include_advisors else 0
+
         top_level_count = 0
-        for sf in session_files:
+        for sf in primary_files:
             rel = os.path.relpath(sf, self.sessions_dir).replace("\\", "/")
             if rel.count("/") <= 1:
                 top_level_count += 1
-        subagent_count = len(session_files) - top_level_count
-        self.session_stats["omp_sessions"] = len(session_files)
+        subagent_count = len(primary_files) - top_level_count
+        self.session_stats["omp_sessions"] = len(primary_files)
         self.session_stats["omp_top_level"] = top_level_count
         self.session_stats["omp_subagents"] = subagent_count
         self.session_stats["omp_advisors_skipped"] = advisors_skipped
+        self.session_stats["omp_advisors_included"] = advisors_included
         print(
-            f"[*] OMP sessions: {len(session_files)} transcripts "
-            f"({top_level_count} top-level, {subagent_count} subagents; {advisors_skipped} advisors skipped)"
+            f"[*] OMP sessions: {len(primary_files)} transcripts "
+            f"({top_level_count} top-level, {subagent_count} subagents; "
+            f"{advisors_skipped} advisors skipped, {advisors_included} advisors included)"
         )
 
-        for sf in session_files:
-            rel_session = os.path.relpath(sf, self.sessions_dir)
-            captured: Dict[str, Tuple[str, str]] = {}
-            eval_counter = 0
-            edit_counter = 0
+        scan_queue: List[Tuple[str, str]] = [(sf, "omp") for sf in primary_files]
+        if self.include_advisors:
+            scan_queue.extend((sf, "omp-advisor") for sf in advisor_files)
+
+        for sf, source_kind in scan_queue:
+            rel_session = os.path.relpath(sf, self.sessions_dir).replace("\\", "/")
+            wm_key = f"{source_kind}://{rel_session}"
             try:
-                with open(sf, "r", encoding="utf-8", errors="ignore") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            entry = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        msg = entry.get("message")
-                        if not isinstance(msg, dict):
-                            continue
-                        content = msg.get("content", [])
-                        if not isinstance(content, list):
-                            continue
+                st = os.stat(sf)
+            except OSError:
+                continue
 
-                        for block in content:
-                            if not isinstance(block, dict) or block.get("type") != "toolCall":
-                                continue
-                            self.session_stats["total_tool_calls"] += 1
-                            name = block.get("name", "")
-                            args = block.get("arguments", {})
-                            if not isinstance(args, dict):
-                                continue
+            existing_wm = self._existing_watermarks.get(wm_key)
+            if (
+                not self.full_rescan
+                and isinstance(existing_wm, dict)
+                and existing_wm.get("mtime_ns") == st.st_mtime_ns
+                and existing_wm.get("size") == st.st_size
+                and isinstance(existing_wm.get("artifacts"), list)
+            ):
+                self._rehydrate_watermark(wm_key, existing_wm)
+                continue
 
-                            if name == "write":
-                                tp = str(args.get("path", "")).strip()
-                                body = str(args.get("content", ""))
-                                if tp and len(body) > 100 and _is_code_or_skill_path(tp):
-                                    captured[tp] = ("write", body)
-                            elif name == "edit":
-                                tp = str(args.get("path", "")).strip()
-                                new_txt = str(args.get("newText") or args.get("new_string") or args.get("input") or "")
-                                if tp and len(new_txt) > 80 and _is_code_or_skill_path(tp):
-                                    edit_counter += 1
-                                    captured[f"{tp}#edit{edit_counter}"] = ("edit", new_txt)
-                            elif name == "eval":
-                                lang = str(args.get("language", "py") or "py")
-                                body = str(args.get("code", ""))
-                                if len(body) > 100 and any(kw in body for kw in EVAL_CODE_INDICATORS):
-                                    eval_counter += 1
-                                    h8 = compute_code_hash(body)[:8]
-                                    captured[f"eval_{lang}_{eval_counter}_{h8}"] = ("eval", body)
-                            elif name == "bash":
-                                cmd = str(args.get("command", ""))
-                                for tp, body in _extract_bash_scripts(cmd):
-                                    captured[tp] = ("bash", body)
+            ok, raw_bytes = _read_bytes_with_retry(sf)
+            if not ok:
+                if isinstance(existing_wm, dict):
+                    self.file_watermarks[wm_key] = existing_wm
+                continue
 
-                for tp, (tool_kind, body) in captured.items():
-                    self._record_artifact(rel_session, tool_kind, tp, body, source_kind="omp")
-            except Exception as e:
-                print(f"[!] Warning reading OMP session {sf}: {e}", file=sys.stderr)
+            file_sha = hashlib.sha256(raw_bytes).hexdigest()[:16]
+            lines = raw_bytes.decode("utf-8", errors="ignore").splitlines()
+            tool_calls, captured = _extract_omp_code_entries(lines)
+            self.session_stats["total_tool_calls"] += tool_calls
+
+            file_arts: List[Dict[str, Any]] = []
+            for _tk, (tool_kind, body, entry_idx, tool_key) in captured.items():
+                desc = self._build_descriptor(rel_session, tool_kind, tool_key, body, source_kind, entry_idx, tool_key)
+                self._register_artifact(desc)
+                file_arts.append(desc)
+
+            self.file_watermarks[wm_key] = {
+                "mtime_ns": st.st_mtime_ns,
+                "size": st.st_size,
+                "sha256": file_sha,
+                "tool_calls": tool_calls,
+                "artifacts": file_arts,
+            }
 
     def scan_claude_sessions(self) -> None:
         if self.claude_history_path and os.path.exists(self.claude_history_path):
@@ -485,7 +659,7 @@ class SessionHarvester:
 
         if not self.claude_projects_dir or not os.path.exists(self.claude_projects_dir):
             return
-        all_jsonl = glob.glob(os.path.join(self.claude_projects_dir, "**", "*.jsonl"), recursive=True)
+        all_jsonl = sorted(glob.glob(os.path.join(self.claude_projects_dir, "**", "*.jsonl"), recursive=True))
         top_level = 0
         for sf in all_jsonl:
             rel = os.path.relpath(sf, self.claude_projects_dir).replace("\\", "/")
@@ -502,55 +676,48 @@ class SessionHarvester:
         )
 
         for sf in all_jsonl:
-            rel_session = os.path.relpath(sf, self.claude_projects_dir)
-            captured: Dict[str, Tuple[str, str]] = {}
-            edit_counter = 0
+            rel_session = os.path.relpath(sf, self.claude_projects_dir).replace("\\", "/")
+            wm_key = f"claude://{rel_session}"
             try:
-                with open(sf, "r", encoding="utf-8", errors="ignore") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            entry = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        msg = entry.get("message")
-                        if not isinstance(msg, dict):
-                            continue
-                        content = msg.get("content", [])
-                        if not isinstance(content, list):
-                            continue
+                st = os.stat(sf)
+            except OSError:
+                continue
 
-                        for block in content:
-                            if not isinstance(block, dict) or block.get("type") != "tool_use":
-                                continue
-                            self.session_stats["total_tool_calls"] += 1
-                            name = block.get("name", "")
-                            inp = block.get("input", {})
-                            if not isinstance(inp, dict):
-                                continue
+            existing_wm = self._existing_watermarks.get(wm_key)
+            if (
+                not self.full_rescan
+                and isinstance(existing_wm, dict)
+                and existing_wm.get("mtime_ns") == st.st_mtime_ns
+                and existing_wm.get("size") == st.st_size
+                and isinstance(existing_wm.get("artifacts"), list)
+            ):
+                self._rehydrate_watermark(wm_key, existing_wm)
+                continue
 
-                            if name == "Write":
-                                tp = str(inp.get("file_path", "")).strip()
-                                body = str(inp.get("content", ""))
-                                if tp and len(body) > 100 and _is_code_or_skill_path(tp):
-                                    captured[tp] = ("Write", body)
-                            elif name == "Edit":
-                                tp = str(inp.get("file_path", "")).strip()
-                                new_txt = str(inp.get("new_string", ""))
-                                if tp and len(new_txt) > 80 and _is_code_or_skill_path(tp):
-                                    edit_counter += 1
-                                    captured[f"{tp}#edit{edit_counter}"] = ("Edit", new_txt)
-                            elif name == "Bash":
-                                cmd = str(inp.get("command", ""))
-                                for tp, body in _extract_bash_scripts(cmd):
-                                    captured[tp] = ("Bash", body)
+            ok, raw_bytes = _read_bytes_with_retry(sf)
+            if not ok:
+                if isinstance(existing_wm, dict):
+                    self.file_watermarks[wm_key] = existing_wm
+                continue
 
-                for tp, (tool_kind, body) in captured.items():
-                    self._record_artifact(rel_session, tool_kind, tp, body, source_kind="claude")
-            except Exception as e:
-                print(f"[!] Warning reading Claude session {sf}: {e}", file=sys.stderr)
+            file_sha = hashlib.sha256(raw_bytes).hexdigest()[:16]
+            lines = raw_bytes.decode("utf-8", errors="ignore").splitlines()
+            tool_calls, captured = _extract_claude_code_entries(lines)
+            self.session_stats["total_tool_calls"] += tool_calls
+
+            file_arts: List[Dict[str, Any]] = []
+            for _tk, (tool_kind, body, entry_idx, tool_key) in captured.items():
+                desc = self._build_descriptor(rel_session, tool_kind, tool_key, body, "claude", entry_idx, tool_key)
+                self._register_artifact(desc)
+                file_arts.append(desc)
+
+            self.file_watermarks[wm_key] = {
+                "mtime_ns": st.st_mtime_ns,
+                "size": st.st_size,
+                "sha256": file_sha,
+                "tool_calls": tool_calls,
+                "artifacts": file_arts,
+            }
 
     def scan_history_db(self) -> Dict[str, Any]:
         if not self.history_db_path or not os.path.exists(self.history_db_path):
@@ -588,8 +755,9 @@ class SessionHarvester:
         self.scan_claude_sessions()
         self.scan_history_db()
         print(
-            f"[v] Parsed {self.session_stats['total_tool_calls']} tool calls; "
-            f"extracted {self.session_stats['extracted_scripts']} candidate code artifacts from sessions."
+            f"[v] Parsed {self.session_stats['total_tool_calls']} tool calls "
+            f"(skipped {self.session_stats['skipped_unchanged']} unchanged files); "
+            f"indexed {self.session_stats['extracted_scripts']} candidate code artifacts."
         )
         return {
             **self.session_stats,
@@ -684,6 +852,7 @@ class SessionHarvester:
 
         discovered_dirs: List[str] = []
         deltas: List[Dict[str, Any]] = []
+        container_links_count = 0
 
         for root in roots:
             if not os.path.exists(root):
@@ -707,6 +876,15 @@ class SessionHarvester:
                             ("rules", g_rules),
                         ):
                             sp = os.path.join(cfg_path, sub)
+                            c_lnk, c_tgt = is_reparse_or_symlink(sp)
+                            if c_lnk:
+                                container_links_count += 1
+                                item["links"].append({
+                                    "sub": sub,
+                                    "entry": "<container>",
+                                    "container": True,
+                                    "target": sanitize_path(c_tgt or "", priv_pat=self.priv_pat),
+                                })
                             if not os.path.isdir(sp):
                                 continue
                             entries = sorted(e for e in os.listdir(sp) if not e.startswith("."))
@@ -714,7 +892,7 @@ class SessionHarvester:
                             for e in entries:
                                 lnk, tgt = is_reparse_or_symlink(os.path.join(sp, e))
                                 if lnk:
-                                    item["links"].append({"sub": sub, "entry": e, "target": sanitize_path(tgt or "", priv_pat=self.priv_pat)})
+                                    item["links"].append({"sub": sub, "entry": e, "container": False, "target": sanitize_path(tgt or "", priv_pat=self.priv_pat)})
                             if missing:
                                 item["missingFromOmpGlobal"][sub] = missing
                         if item["missingFromOmpGlobal"] or item["links"]:
@@ -727,31 +905,93 @@ class SessionHarvester:
             "globalClaudeAgentsCount": len(g_claude_agents),
             "projectConfigDirsScanned": len(discovered_dirs),
             "projectDeltasCount": len(deltas),
+            "containerLinksCount": container_links_count,
             "deltas": deltas,
         }
         print(
             f"[v] Global diff: scanned {len(discovered_dirs)} non-excluded .omp/.claude/.agent dirs; "
-            f"{len(deltas)} carry unpromoted items or symlinks."
+            f"{len(deltas)} carry unpromoted items or symlinks ({container_links_count} container links)."
         )
         return self.global_diff_report
 
+    def extract_cluster(self, cluster_hash: str, out_dir: str) -> Dict[str, Any]:
+        if not os.path.exists(self.ledger_path):
+            raise FileNotFoundError(f"Ledger missing: {self.ledger_path}")
+        ledger = json.loads(Path(self.ledger_path).read_text(encoding="utf-8"))
+        locs = ledger.get("clusterIndex", {}).get(cluster_hash)
+        if not locs:
+            raise KeyError(f"Cluster hash not found in ledger clusterIndex: {cluster_hash}")
+        if isinstance(locs, dict):
+            locs = [locs]
+
+        written: List[str] = []
+        out_root = Path(out_dir)
+        out_root.mkdir(parents=True, exist_ok=True)
+
+        for loc in locs:
+            source_kind = loc.get("source", "omp")
+            rel_session = loc.get("sessionRel", "")
+            entry_idx = loc.get("entryIndex")
+            tool_key = loc.get("toolKey", "")
+            base_dir = self.claude_projects_dir if source_kind == "claude" else self.sessions_dir
+            if not base_dir or not rel_session:
+                continue
+            sf = os.path.join(base_dir, rel_session)
+            if not os.path.isfile(sf):
+                continue
+            ok, raw_bytes = _read_bytes_with_retry(sf)
+            if not ok:
+                continue
+            lines = raw_bytes.decode("utf-8", errors="ignore").splitlines()
+            if entry_idx is None or not (0 <= int(entry_idx) < len(lines)):
+                continue
+            slice_lines = [lines[int(entry_idx)]]
+            if source_kind == "claude":
+                _, captured = _extract_claude_code_entries(slice_lines)
+            else:
+                _, captured = _extract_omp_code_entries(slice_lines)
+
+            matched_body: Optional[str] = None
+            for tk, (_kind, body, _idx, _tp) in captured.items():
+                if tk == tool_key or compute_code_hash(body) == cluster_hash:
+                    matched_body = body
+                    break
+            if matched_body is None:
+                continue
+
+            raw_name = Path(str(tool_key).split("#", 1)[0]).name or f"cluster_{cluster_hash}.txt"
+            safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", raw_name)
+            if not Path(safe_name).suffix:
+                safe_name += ".py"
+            dest = out_root / f"{cluster_hash}_{safe_name}"
+            dest.write_text(matched_body.replace("\r\n", "\n"), encoding="utf-8", newline="\n")
+            written.append(str(dest))
+            break
+
+        if not written:
+            raise RuntimeError(f"Unable to extract source body for hash {cluster_hash}")
+        return {"ok": True, "hash": cluster_hash, "written": written}
+
     def update_ledger(self) -> None:
         if not os.path.exists(self.ledger_path):
-            ledger: Dict[str, Any] = {"version": "2.0.0", "suites": {}, "summary": {}}
+            ledger: Dict[str, Any] = {"version": "2.0.0", "suites": {}, "summary": {}, "promotedHashes": {}}
         else:
             with open(self.ledger_path, "r", encoding="utf-8") as f:
                 ledger = json.load(f)
 
-        ledger["version"] = "2.0.0"
+        ledger["version"] = "2.1.0"
         ledger.setdefault("summary", {})
         ledger["summary"].update({
             "ompSessionsScouted": self.session_stats["omp_sessions"],
+            "ompAdvisorsSkipped": self.session_stats["omp_advisors_skipped"],
+            "ompAdvisorsIncluded": self.session_stats["omp_advisors_included"],
             "claudeSessionsScouted": self.session_stats["claude_sessions"],
             "totalSessionsScouted": self.session_stats["omp_sessions"] + self.session_stats["claude_sessions"],
             "historyDbPrompts": self.history_summary.get("prompts", 0),
             "historyDbRecaps": self.history_summary.get("recaps", 0),
             "harvestedArtifactsCount": len(self.harvested_artifacts),
             "uniqueCodeClusters": len(self.duplicate_groups),
+            "skippedUnchanged": self.session_stats["skipped_unchanged"],
             "lastHarvestTimestamp": datetime.now(timezone.utc).isoformat(),
         })
         if self.global_diff_report:
@@ -761,8 +1001,27 @@ class SessionHarvester:
                 k: v for k, v in self.global_diff_report.items() if k != "deltas"
             }
 
-        if ledger.get("status") not in ("COMPLETED", "VERIFIED_E2E"):
+        promoted_hashes = ledger.setdefault("promotedHashes", {})
+        unpromoted_hashes = sorted(set(self.cluster_index.keys()) - set(promoted_hashes.keys()))
+        unpromoted_delta_dirs = [
+            d.get("dir") for d in self.global_diff_report.get("deltas", []) if d.get("missingFromOmpGlobal")
+        ]
+
+        cur_status = ledger.get("status", "")
+        if cur_status in ("COMPLETED", "VERIFIED_E2E"):
+            if unpromoted_hashes or unpromoted_delta_dirs:
+                ledger["status"] = "DRIFT_DETECTED"
+                ledger["driftDetails"] = {
+                    "unpromotedHashes": unpromoted_hashes[:50],
+                    "unpromotedDeltaDirs": unpromoted_delta_dirs[:30],
+                }
+        elif cur_status != "DRIFT_DETECTED":
             ledger["status"] = "HARVESTED"
+        elif not unpromoted_hashes and not unpromoted_delta_dirs:
+            ledger.pop("driftDetails", None)
+
+        ledger["fileWatermarks"] = self.file_watermarks
+        ledger["clusterIndex"] = self.cluster_index
 
         suite_counts: Dict[str, int] = {}
         for a in self.harvested_artifacts:
@@ -805,9 +1064,10 @@ class SessionHarvester:
             "# OMP Harvest Inventory & Deduplication Report",
             "",
             f"- **Generated:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
-            f"- **OMP Sessions Scanned:** {self.session_stats['omp_sessions']} ({self.session_stats['omp_top_level']} top, {self.session_stats['omp_subagents']} subagents, {self.session_stats['omp_advisors_skipped']} advisors skipped)",
+            f"- **OMP Sessions Scanned:** {self.session_stats['omp_sessions']} ({self.session_stats['omp_top_level']} top, {self.session_stats['omp_subagents']} subagents; {self.session_stats['omp_advisors_skipped']} advisors skipped, {self.session_stats['omp_advisors_included']} advisors included)",
             f"- **Claude Sessions Scanned:** {self.session_stats['claude_sessions']} ({self.session_stats['claude_top_level']} top, {self.session_stats['claude_subagents']} subagents/journals; {self.session_stats['claude_history_entries']} history.jsonl entries)",
-            f"- **Total Candidate Artifacts Extracted:** {len(self.harvested_artifacts)}",
+            f"- **Incremental Skips (Unchanged Watermarks):** {self.session_stats['skipped_unchanged']}",
+            f"- **Total Candidate Artifacts Indexed:** {len(self.harvested_artifacts)}",
             f"- **Unique Code Hashes:** {len(self.duplicate_groups)}",
             "",
             "## 1. Summary by Target Suite",
@@ -854,6 +1114,7 @@ class SessionHarvester:
                 "",
                 f"- **Project Config Dirs Scanned (Tier C excluded):** {self.global_diff_report['projectConfigDirsScanned']}",
                 f"- **Dirs with Unpromoted Assets / Links:** {self.global_diff_report['projectDeltasCount']}",
+                f"- **Container-level Links Detected:** {self.global_diff_report.get('containerLinksCount', 0)}",
                 "",
                 "| Project Config Dir | Missing from Global OMP | Links/Junctions |",
                 "|---|---|---|",
@@ -885,6 +1146,15 @@ class SessionHarvester:
             return {"status": "NO_LEDGER", "next": "Run --scan to initialize ledger"}
         with open(self.ledger_path, "r", encoding="utf-8") as f:
             ledger = json.load(f)
+        if ledger.get("status") == "DRIFT_DETECTED":
+            drift = ledger.get("driftDetails", {})
+            return {
+                "type": "drift",
+                "status": "DRIFT_DETECTED",
+                "unpromotedHashes": drift.get("unpromotedHashes", []),
+                "unpromotedDeltaDirs": drift.get("unpromotedDeltaDirs", []),
+                "next": "Inspect unpromoted clusters via --extract <hash> or promote missing global assets",
+            }
         for name, meta in ledger.get("suites", {}).items():
             st = meta.get("status", "PENDING")
             if st not in ("PACKAGED", "VERIFIED", "VERIFIED_E2E"):
@@ -914,13 +1184,13 @@ class SessionHarvester:
 def run_interactive_menu(harvester: SessionHarvester) -> None:
     while True:
         print("\n" + "=" * 54)
-        print(" OMP & Claude Multi-Source Harvester CLI (V2)")
+        print(" OMP & Claude Multi-Source Harvester CLI (V3)")
         print("=" * 54)
-        print("1. Scan OMP + Claude sessions, history.db & workspaces")
+        print("1. Scan OMP + Claude sessions, history.db & workspaces (incremental)")
         print("2. Scan + Global .omp/.claude/.agent diff")
         print("3. Update ledger and generate Markdown report")
         print("4. Show next pending loop unit (--next)")
-        print("5. View top duplicated code clusters")
+        print("5. View top duplicated code clusters / extract by hash")
         print("6. Exit")
         try:
             choice = input("\nSelect option [1-6]: ").strip()
@@ -964,6 +1234,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--diff-global", action="store_true", help="Scan project .omp/.claude/.agent dirs against global.")
     parser.add_argument("--next", action="store_true", help="Print next pending loop unit from ledger.")
     parser.add_argument("--verify-ledger", action="store_true", help="Verify claimed packaged paths in ledger.")
+    parser.add_argument("--extract", type=str, default=None, help="Extract full original script for cluster hash.")
+    parser.add_argument("--out", type=str, default="extracted_clusters", help="Output directory for --extract.")
+    parser.add_argument("--full-rescan", action="store_true", help="Ignore fileWatermarks and re-parse all transcripts.")
+    parser.add_argument("--include-advisors", action="store_true", help="Include __advisor*.jsonl files in scan.")
     parser.add_argument("--no-local-config", action="store_true", help="Ignore ~/.omp/harvest-workspaces.local.json.")
     parser.add_argument("--sessions-dir", type=str, default=None, help="Custom OMP sessions directory.")
     parser.add_argument("--claude-projects-dir", type=str, default=None, help="Custom Claude projects directory.")
@@ -983,8 +1257,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         config_path=args.config,
         ledger_path=args.ledger,
         no_local_config=args.no_local_config,
+        full_rescan=args.full_rescan,
+        include_advisors=args.include_advisors,
     )
 
+    if args.extract:
+        res = harvester.extract_cluster(args.extract, args.out)
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+        return 0
     if args.next and not args.scan:
         print(json.dumps(harvester.get_next_unit(), indent=2, ensure_ascii=False))
         return 0
