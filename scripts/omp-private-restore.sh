@@ -204,12 +204,21 @@ if [ -f "$USER_HOME/.omp/agent/mcp.json" ]; then
 fi
 USER_HOME_TAR="$(to_tar_path "$USER_HOME")"
 
+# ~/Projects/omp_extension is owned by omp_extension's sync-baseline.cjs (its extensions/typesafe-planner.ts
+# loader points there). Never overwrite an existing copy from a --include-dev-repos archive; extract it
+# only on a machine that does not have the directory yet.
+TAR_EXCLUDES=()
+if [ -d "$USER_HOME/Projects/omp_extension" ]; then
+	echo "-> Skipping Projects/omp_extension from archive: directory already exists (managed by omp_extension sync-baseline)."
+	TAR_EXCLUDES=(--exclude="./Projects/omp_extension" --exclude="Projects/omp_extension")
+fi
+
 if [ "$IS_GPG" -eq 1 ]; then
 	echo "Decrypting and extracting $ARCHIVE into $USER_HOME..."
-	gpg "${GPG_DECRYPT_ARGS[@]}" "$(to_gpg_path "$ARCHIVE")" | tar -xzf - -C "$USER_HOME_TAR"
+	gpg "${GPG_DECRYPT_ARGS[@]}" "$(to_gpg_path "$ARCHIVE")" | tar -xzf - "${TAR_EXCLUDES[@]}" -C "$USER_HOME_TAR"
 else
 	echo "Extracting plain archive $ARCHIVE into $USER_HOME..."
-	tar -xzf "$(to_tar_path "$ARCHIVE")" -C "$USER_HOME_TAR"
+	tar -xzf "$(to_tar_path "$ARCHIVE")" "${TAR_EXCLUDES[@]}" -C "$USER_HOME_TAR"
 fi
 if [ -n "$MCP_PRE_BAK" ]; then
 	if [ -f "$USER_HOME/.omp/agent/mcp.json" ] && ! cmp -s "$MCP_PRE_BAK" "$USER_HOME/.omp/agent/mcp.json" 2>/dev/null; then
