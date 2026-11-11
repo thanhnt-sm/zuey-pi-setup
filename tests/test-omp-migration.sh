@@ -506,16 +506,17 @@ if [ "$(cat "$LT_HOME/.omp/agent/extensions/typesafe-planner.ts")" != "$LT_LOADE
 fi
 echo "✓ PASS: manifest-less (legacy) snapshot cannot clobber an existing loader."
 
-# C. Loader missing but target exists: loader recreated from the manifest, no deref dir
+# C. Loader missing but target exists: restore must NOT write the loader (operator-owned), no deref dir, prints the command
 LT_LOST="$TEST_TMP/lt_lost/.omp"
 mkdir -p "$LT_LOST"
-HOME="$LT_HOME" USERPROFILE="$LT_HOME" run_restore --source-tar "$LT_TAR" --target-dir "$LT_LOST" --no-install --no-upstream >/dev/null 2>&1
-if [ "$(cat "$LT_LOST/agent/extensions/typesafe-planner.ts")" != "$LT_LOADER" ] \
-    || [ -e "$LT_LOST/agent/extensions/typesafe-planner" ]; then
-    echo "FAIL: loader not recreated from manifest when its target exists."
+HOME="$LT_HOME" USERPROFILE="$LT_HOME" run_restore --source-tar "$LT_TAR" --target-dir "$LT_LOST" --no-install --no-upstream >"$TEST_TMP/lt_lost.out" 2>&1
+if [ -e "$LT_LOST/agent/extensions/typesafe-planner.ts" ] \
+    || [ -e "$LT_LOST/agent/extensions/typesafe-planner" ] \
+    || ! grep -q "loader typesafe-planner.ts is missing" "$TEST_TMP/lt_lost.out"; then
+    echo "FAIL: restore wrote the loader, installed the deref copy, or did not tell the operator."
     exit 1
 fi
-echo "✓ PASS: missing loader recreated (1-line) when the target exists; deref copy skipped."
+echo "✓ PASS: missing loader is left to the operator (warning printed); deref copy skipped."
 
 # D. Machine without the target: portable fallback to the dereferenced package, with a warning
 LT_OTHER_HOME="$TEST_TMP/lt_other_home"

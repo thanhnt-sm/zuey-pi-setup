@@ -207,8 +207,8 @@ fi
 # A 1-line `export { default } from "<abs path>";` loader belongs to the machine that owns the
 # target (e.g. typesafe-planner.ts -> ~/Projects/omp_extension, managed by omp_extension's sync).
 # Installing the dereferenced extensions/<name>/ package next to it would load the extension twice,
-# so: keep an existing loader untouched; else recreate it from the backup manifest when its target
-# exists here; else fall back to the dereferenced package (portable copy) with a warning.
+# so: keep an existing loader untouched; else, when the manifest target exists here, skip the package and tell the operator to create the loader (scripts never write it); else
+# fall back to the dereferenced package (portable copy) with a warning.
 ABS_IMPORT_RE="(from|import|require\()[[:space:]]*[\"'](([A-Za-z]:[/\\])|/)[^\"']+[\"']"
 is_loader_shim() {
 	[ -f "$1" ] || return 1
@@ -248,9 +248,9 @@ reconcile_loader_shims() {
 			"{{USER_HOME}}/"*) [ -n "$home_nat" ] && target="$home_nat/${tmpl#"{{USER_HOME}}/"}" ;;
 		esac
 		if [ -n "$target" ] && [ -f "$target" ]; then
-			printf 'export { default } from "%s";
-' "$target" > "$stage_ext/$name.$loader_ext"
-			echo "-> Recreating loader $name.$loader_ext -> $target (not installing dereferenced $name/)"
+			# The loader is operator-owned (omp_extension: "no script creates the loader"), so never write it here.
+			echo "Warning: loader $name.$loader_ext is missing; not installing dereferenced $name/ because $target exists." >&2
+			echo "         Create it yourself: printf 'export { default } from \"%s\";\\n' \"$target\" > \"$ext_root/$name.$loader_ext\"" >&2
 			rm -rf "$entry"
 		else
 			echo "Warning: loader target for $name not found on this machine; installing the dereferenced snapshot $name/." >&2
