@@ -29,6 +29,10 @@ _DOC_PLACEHOLDERS = {"user", "username", "jesse", "name", "example", "demo", "<u
 _ALLOW_ABS_FILES = {"path-utils.cjs", "typesafe-redact-patterns.cjs", "typesafe-enabled-resolver.cjs"}
 _WIN_PATH_RE = re.compile(r"(?:^|(?<=[\s\"'`(=,;\[{<]))([A-Za-z]):(/+|\\+(?![sSwWdDbBnrtvf0-9.*+?\[({\\$]))([^\s\"'`<>)\]]*)")
 _POSIX_HOME_RE = re.compile(r"(?:/Users/|/home/)([A-Za-z0-9._<>-]+)")
+# 1-line extension loader: `export { default } from "<absolute path>";` (re-export of a deployed dev repo)
+_LOADER_SHIM_RE = re.compile(r"""^\s*export\s*\{\s*default\s*\}\s*from\s*["']((?:[A-Za-z]:[/\\]|/)[^"']+)["']\s*;?\s*$""")
+# Dev repos whose deployed copy is the target of extensions/<name>.ts loaders (managed by their own sync tooling)
+_DEV_TARGET_REL = ("Projects", "omp_extension")
 
 
 def _detect_os() -> str:
@@ -111,6 +115,42 @@ def _check_extensions_and_wal(target_dir: Path, errors: List[str], warnings: Lis
             if p.name.endswith(("-wal", "-shm")):
                 wal_files.append(p.name)
     return {"ok": True, "hubReady": len(missing) == 0, "missingExtensionFiles": missing, "walFiles": wal_files}
+
+
+def _loader_shim_target(path: Path) -> Optional[str]:
+    """Return the absolute target of a 1-line re-export loader, or None if `path` is not one."""
+    try:
+        lines = [ln for ln in path.read_text(encoding="utf-8", errors="ignore").splitlines() if ln.strip()]
+    except OSError:
+        return None
+    if len(lines) != 1:
+        return None
+    m = _LOADER_SHIM_RE.match(lines[0])
+    return m.group(1) if m else None
+
+
+def _check_loader_topology(target_dir: Path, home_dir: Path, warnings: List[str]) -> Dict[str, Any]:
+    """Warn on loader/package duplication (both load) or a missing loader whose target exists."""
+    ext_dir = target_dir / "agent" / "extensions"
+    dev_dir = home_dir.joinpath(*_DEV_TARGET_REL)
+    names = {"typesafe-planner"}
+    if ext_dir.is_dir():
+        names.update(p.name for p in ext_dir.iterdir() if p.is_dir())
+        names.update(p.stem for p in ext_dir.glob("*.ts") if _loader_shim_target(p))
+        names.update(p.stem for p in ext_dir.glob("*.js") if _loader_shim_target(p))
+    issues: List[str] = []
+    for name in sorted(names):
+        loader = next((ext_dir / f"{name}{e}" for e in (".ts", ".js") if (ext_dir / f"{name}{e}").is_file()), None)
+        shim_target = _loader_shim_target(loader) if loader else None
+        has_pkg = (ext_dir / name).is_dir()
+        if shim_target and has_pkg:
+            issues.append(f"extensions/{name}.ts (loader) and extensions/{name}/ (package) both exist: the extension loads twice. Remove the {name}/ package.")
+        if shim_target and not Path(shim_target).is_file():
+            issues.append(f"extensions/{name}{loader.suffix} points at missing {shim_target}.")
+        if not loader and (dev_dir / f"{name}.ts").is_file():
+            issues.append(f"extensions/{name}.ts loader is missing while {dev_dir / (name + '.ts')} exists. Recreate the 1-line loader: export {{ default }} from \"<that path>\";")
+    warnings.extend(f"Loader topology: {msg}" for msg in issues)
+    return {"ok": not issues, "issues": issues}
 
 
 def _check_mcp_configs(
@@ -305,6 +345,7 @@ def run_doctor(
         "toolsVenv": _check_tools_venv(target_dir, strict, errors, warnings),
         "plugins": _check_plugins(target_dir, strict, errors, warnings),
         "extensions": _check_extensions_and_wal(target_dir, errors, warnings),
+        "loaderTopology": _check_loader_topology(target_dir, home_dir, warnings),
         "mcpConfigs": _check_mcp_configs(target_dir, home_dir, os_kind, strict, errors, warnings),
         "localLinks": _check_local_links(repo_dir, target_dir, no_local_config, errors),
         "repoLeaks": _check_repo_leaks(repo_dir, errors),
