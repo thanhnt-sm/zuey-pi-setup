@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "typesafe": {
+      "type": "stdio",
+      "command": "{{OMP_NODE}}",
+      "args": [
+        "{{USER_HOME}}/.claude/mcp/typesafe/typesafe-mcp-server.cjs"
+      ]
+    }
+  }
+}

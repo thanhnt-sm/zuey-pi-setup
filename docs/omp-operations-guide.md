@@ -377,13 +377,16 @@ cp -r ~/.omp/restore-backups/<latest_timestamp>/* ~/.omp/
 | Tác vụ | Lệnh thực thi | Ghi chú |
 | :--- | :--- | :--- |
 | **Backup cấu hình lên Git** | `./scripts/omp-setup-backup.sh --source ~/.omp --config-dir config/omp -o backups/omp-setup-portable.tar.gz` | Tạo snapshot sạch, an toàn |
-| **Backup dữ liệu riêng tư** | `OMP_BACKUP_PASSPHRASE_FILE=~/.omp-backup-pass ./scripts/omp-private-backup.sh --all` | Mã hóa memory (đã lọc bank scratch), history, `--claude` |
+| **Bootstrap 1 lệnh (Win/Mac)** | `./scripts/omp-bootstrap.sh --mode restore --link-mirrors` (Win PS: `.\scripts\omp-bootstrap.ps1 -mode restore`) | Chạy Public restore -> Private GPG (nếu có `--private-archive`) -> Local link -> `omp-doctor` |
+| **Chẩn đoán sức khỏe OMP** | `python3 scripts/omp-doctor.py --strict --json` (hoặc `/omp-doctor` trong OMP) | Kiểm tra `tools-venv`, plugins, `mcp.json`, local links, WAL và leak repo |
+| **Native Tools trong OMP V4** | `omp_office`, `omp_pmo`, `omp_email`, `omp_maint`, `omp_harvest` | Tự resolve `~/.omp/tools-venv` trên Win/Mac (`omp_maint clean` đòi hỏi `force: true`) |
+| **Backup dữ liệu riêng tư** | `OMP_BACKUP_PASSPHRASE_FILE=~/.omp-backup-pass ./scripts/omp-private-backup.sh --all` | Mã hóa memory (đã lọc bank scratch), history, `--claude`, `~/.omp/agent/mcp.json` |
 | **Backup thêm sessions (.jsonl)** | `./scripts/omp-private-backup.sh --all --sessions` | Opt-in backup transcript OMP + Claude ngoài Git |
-| **Thu hoạch & lặp đa session** | `python3 ~/.omp/agent/skills/omp-session-harvester/scripts/harvest_cli.py --scan --diff-global` | Incremental watermarks; trong OMP dùng `/harvest-loop` |
-| **Trích xuất script đầy đủ theo hash** | `python3 ~/.omp/agent/skills/omp-session-harvester/scripts/harvest_cli.py --extract <hash> --out ./out` | Khôi phục toàn bộ mã gốc từ `.jsonl` |
-| **Tham chiếu thư mục local về global** | `python3 scripts/omp-link-local.py --plan` (rồi `--apply` / `--verify`) | Opt-in junction/hash-sync cho `shared_mirror`, giữ nguyên `override` |
-| **Restore máy mới (Setup)** | `./scripts/omp-setup-restore.sh` | Chạy trên macOS/Linux/Windows mới (tự cài `pypdf` vào `tools-venv`) |
-| **Restore ký ức & history** | `./scripts/omp-private-restore.sh ~/Downloads/omp-private-<ts>.tar.gz.gpg` | Chống treo M1, dò `nvm`/`fnm`/`volta`/`mise` node, tự dọn WAL |
+| **Thu hoạch & lặp đa session (V4)** | `python3 ~/.omp/agent/skills/omp-session-harvester/scripts/harvest_cli.py --scan --diff-global` | Tự lọc >90% nhiễu `#edit`/runner; dùng `--stage` -> test -> `--commit-stage` hoặc `--triage` |
+| **Trích xuất & Triage cluster** | `harvest_cli.py --extract <hash> --out ./out` / `--triage <hash> --disposition ignored_noise` | Khôi phục mã gốc hoặc gắn trạng thái `merged_into`/`deferred`/`ignored_noise` |
+| **Tham chiếu thư mục local về global** | `python3 scripts/omp-link-local.py --plan` (rồi `--apply --prefer-hardlink --verify`) | Link Project -> Global cho `shared_mirror` (kể cả `skills/` hỗn hợp), giữ nguyên `override`/`archive` |
+| **Restore máy mới (Setup)** | `./scripts/omp-setup-restore.sh` | Chạy trên macOS/Linux/Windows mới (tự seed `mcp.json` khi thiếu & cài `pypdf` vào `tools-venv`) |
+| **Restore ký ức & history** | `./scripts/omp-private-restore.sh ~/Downloads/omp-private-<ts>.tar.gz.gpg` | Chống treo M1, dò `nvm`/`fnm`/`volta`/`mise` node, rehydrate `mcp.json` & `.claude.json`, dọn WAL |
 | **Đồng bộ từ zuey gốc** | `./scripts/omp-sync-upstream.sh` | Zero git merge, giữ nguyên version |
 | **Chạy toàn bộ bài test** | `./tests/test-omp-migration.sh && bun test tests/test-omp-toolkit-hub.test.ts` | Xác minh an toàn trước khi push |
 | **Hủy tiến trình GPG treo** | `killall gpg-agent 2>/dev/null; rm -f ~/.gnupg/*.lock` | Cứu nguy khi gpg bị đứng |

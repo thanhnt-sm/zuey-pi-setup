@@ -17,13 +17,18 @@ python3 ~/.omp/agent/skills/omp-session-harvester/scripts/harvest_cli.py --extra
 
 # 3. Force full re-parse or include __advisor*.jsonl transcripts separately
 python3 ~/.omp/agent/skills/omp-session-harvester/scripts/harvest_cli.py --scan --full-rescan --include-advisors
-
-# 4. Check next incomplete unit or drift item in multi-session loop
+# 4. Check next incomplete batch or round summary in multi-session loop
 python3 ~/.omp/agent/skills/omp-session-harvester/scripts/harvest_cli.py --next
+python3 ~/.omp/agent/skills/omp-session-harvester/scripts/harvest_cli.py --round-summary
+
+# 5. Two-phase promotion & cluster triage
+python3 ~/.omp/agent/skills/omp-session-harvester/scripts/harvest_cli.py --stage <hash>
+python3 ~/.omp/agent/skills/omp-session-harvester/scripts/harvest_cli.py --commit-stage <hash> --suite <suite> --target <path>
+python3 ~/.omp/agent/skills/omp-session-harvester/scripts/harvest_cli.py --triage <hash> --disposition ignored_noise
 python3 ~/.omp/agent/skills/omp-session-harvester/scripts/harvest_cli.py --verify-ledger
 ```
 
-## Multi-Session Continuity Loop Protocol
-1. Run `/harvest-loop status` (or `harvest_cli.py --next`) to resume from `loop-checkpoint.json` / ledger.
-2. When `DRIFT_DETECTED` or a suite appears, use `--extract <hash>` (`omp_extract_cluster`) to materialize full utilities, promote into `skills/<suite>/`, and record in `promotedHashes`.
-3. Re-run `--scan --diff-global` and `--verify-ledger` before committing and starting the next round.
+## Multi-Session Continuity Loop Protocol (V4)
+1. Run `/harvest-loop status` (or `harvest_cli.py --next`) to resume any orphaned `staged` items or fetch the highest-occurrence actionable batch from `promotionQueue` (`#edit` hunks, test runners, and scratchpads are filtered out unless `--include-noise` is set).
+2. Mark candidate `--stage <hash>`, extract via `--extract <hash>` (`omp_extract_cluster`), promote into `skills/<suite>/`, run `pytest`/`bun test`, and finalize with `--commit-stage <hash> --suite <suite> --target <path>` (or `--triage <hash> --disposition <merged_into|deferred|ignored_noise>`).
+3. Re-run `--scan --diff-global` and `--verify-ledger` before committing and advancing `loopMeta.round`.

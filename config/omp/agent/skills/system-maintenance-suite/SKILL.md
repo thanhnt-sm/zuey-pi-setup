@@ -18,11 +18,16 @@ python3 scripts/maintenance_cli.py
 ```bash
 # 1. Always inspect reclaimable space first (zero deletions)
 python3 scripts/maintenance_cli.py --cmd analyze --mode full --dry-run --json
+python3 scripts/maintenance_cli.py --cmd analyze --mode extended --dry-run --json
 
-# 2. Clean safe dev/temp/browser caches (requires explicit --force)
+# 2. Read-only stale project artifact (>90d) & orphan leftover scans (CleanPC v2.6)
+python3 scripts/maintenance_cli.py --cmd stale-scan --stale-days 90 --json
+python3 scripts/maintenance_cli.py --cmd orphan-scan --json
+
+# 3. Clean safe dev/temp/browser caches (requires explicit --force)
 python3 scripts/maintenance_cli.py --cmd clean --mode quick --force --json
 
-# 3. Generate 3-file cross-OS 9-step AI tool uninstaller suite (.bat, .ps1, .sh)
+# 4. Generate 3-file cross-OS 9-step AI tool uninstaller suite (.bat, .ps1, .sh)
 python3 scripts/maintenance_cli.py --cmd generate-uninstaller --tool my-ai-cli --output ./uninstallers --json
 ```
 

@@ -155,8 +155,15 @@ template_claude_paths() {
 	[ -f "$target_file" ] || return 0
 	home_nat="$(native_path "$USER_HOME")"
 	home_esc="${home_nat//\//\\\\}"
-	if command -v python3 >/dev/null 2>&1; then
-		python3 - "$target_file" "$home_nat" "$home_esc" <<'PY'
+	local py_tmpl=""
+	for _py in python3 python; do
+		if command -v "$_py" >/dev/null 2>&1 && "$_py" -c "import pathlib" >/dev/null 2>&1; then
+			py_tmpl="$_py"
+			break
+		fi
+	done
+	if [ -n "$py_tmpl" ]; then
+		"$py_tmpl" - "$target_file" "$home_nat" "$home_esc" <<'PY'
 import pathlib, re, sys
 p = pathlib.Path(sys.argv[1])
 home_fwd = sys.argv[2].rstrip("/\\")
@@ -166,6 +173,10 @@ for node_pat in [
     re.escape(home_fwd) + r"/\.claude/runtime/node/node(?:\.exe)?",
     re.escape(home_bs) + r"\\+\.claude\\+runtime\\+node\\+node(?:\.exe)?",
     re.escape(home_fwd.replace("/", "\\\\")) + r"\\\\\.claude\\\\runtime\\\\node\\\\node(?:\.exe)?",
+    r"/opt/homebrew/bin/node",
+    r"/usr/local/bin/node",
+    re.escape(home_fwd) + r"/\.nvm/versions/node/[^/\"'\s]+/bin/node",
+    re.escape(home_fwd) + r"/\.volta/bin/node",
 ]:
     txt = re.sub(node_pat, "{{CLAUDE_NODE}}", txt, flags=re.IGNORECASE)
 for h_pat in [re.escape(home_fwd), re.escape(home_fwd.replace("/", "\\\\")), re.escape(home_bs)]:
@@ -359,6 +370,16 @@ elif [ "$WANT_KIT" -eq 1 ]; then
 	done
 	COUNT=$((COUNT + kit_found))
 	echo "-> typesafe-kit: $kit_found path(s)"
+fi
+
+if [ "$WANT_KIT" -eq 1 ] || [ "$WANT_CLAUDE" -eq 1 ]; then
+	if [ -f "$OMP_SRC/agent/mcp.json" ]; then
+		mkdir -p "$STAGE_DIR/.omp/agent"
+		cp "$OMP_SRC/agent/mcp.json" "$STAGE_DIR/.omp/agent/mcp.json"
+		template_claude_paths "$STAGE_DIR/.omp/agent/mcp.json"
+		COUNT=$((COUNT + 1))
+		echo "-> mcp: templatized .omp/agent/mcp.json"
+	fi
 fi
 
 if [ "$COUNT" -eq 0 ]; then

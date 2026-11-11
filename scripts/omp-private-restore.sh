@@ -197,6 +197,11 @@ fi
 
 # 5. Execute extraction with pipeline error trapping
 mkdir -p "$USER_HOME"
+MCP_PRE_BAK=""
+if [ -f "$USER_HOME/.omp/agent/mcp.json" ]; then
+	MCP_PRE_BAK="$(mktemp -t omp-mcp-prebak-XXXXXX)"
+	cp "$USER_HOME/.omp/agent/mcp.json" "$MCP_PRE_BAK"
+fi
 USER_HOME_TAR="$(to_tar_path "$USER_HOME")"
 
 if [ "$IS_GPG" -eq 1 ]; then
@@ -205,6 +210,16 @@ if [ "$IS_GPG" -eq 1 ]; then
 else
 	echo "Extracting plain archive $ARCHIVE into $USER_HOME..."
 	tar -xzf "$(to_tar_path "$ARCHIVE")" -C "$USER_HOME_TAR"
+fi
+if [ -n "$MCP_PRE_BAK" ]; then
+	if [ -f "$USER_HOME/.omp/agent/mcp.json" ] && ! cmp -s "$MCP_PRE_BAK" "$USER_HOME/.omp/agent/mcp.json" 2>/dev/null; then
+		MCP_BAK_DIR="$USER_HOME/.omp/restore-backups/private-$(date +%Y%m%d%H%M%S)/agent"
+		mkdir -p "$MCP_BAK_DIR"
+		mv "$MCP_PRE_BAK" "$MCP_BAK_DIR/mcp.json"
+		echo "-> Previous mcp.json saved to $MCP_BAK_DIR/mcp.json"
+	else
+		rm -f "$MCP_PRE_BAK"
+	fi
 fi
 
 # 6. Cross-OS rehydration for restored ~/.claude templates + ~/.claude.json mcpServers
@@ -240,10 +255,16 @@ elif command -v node >/dev/null 2>&1; then
 fi
 
 rehydrate_claude_json() {
-	local jf="$1"
+	local jf="$1" py_reh=""
 	[ -f "$jf" ] || return 0
-	if command -v python3 >/dev/null 2>&1; then
-		python3 - "$jf" "$TARGET_NODE" "$TARGET_HOME_NAT" <<'PY'
+	for _py in python3 python; do
+		if command -v "$_py" >/dev/null 2>&1 && "$_py" -c "import pathlib" >/dev/null 2>&1; then
+			py_reh="$_py"
+			break
+		fi
+	done
+	if [ -n "$py_reh" ]; then
+		"$py_reh" - "$jf" "$TARGET_NODE" "$TARGET_HOME_NAT" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 node_bin = sys.argv[2].replace("\\", "/")
@@ -260,6 +281,7 @@ PY
 
 rehydrate_claude_json "$USER_HOME/.claude/settings.json"
 rehydrate_claude_json "$USER_HOME/.claude/plugins/known_marketplaces.json"
+rehydrate_claude_json "$USER_HOME/.omp/agent/mcp.json"
 if [ -f "$USER_HOME/.claude-mcp-servers.json" ]; then
 	rehydrate_claude_json "$USER_HOME/.claude-mcp-servers.json"
 	JS_RT=""

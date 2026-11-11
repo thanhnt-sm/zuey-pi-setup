@@ -79,10 +79,59 @@ def _snapshot_backup(target: Path, backup_root: Path, ts: str) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if target.is_dir():
         shutil.copytree(target, dest, dirs_exist_ok=True)
-        shutil.rmtree(target)
+        def _handle_ro(func, p, _exc):
+            try:
+                os.chmod(p, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+                func(p)
+            except OSError:
+                pass
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(target, onexc=_handle_ro)
+        else:
+            shutil.rmtree(target, onerror=_handle_ro)
     else:
         shutil.copy2(target, dest)
-        target.unlink()
+        try:
+            target.unlink()
+        except PermissionError:
+            os.chmod(target, stat.S_IWRITE | stat.S_IREAD)
+            target.unlink()
+
+def _validate_link_direction(link_path: Path, target_path: Path, global_agent: Path) -> Tuple[bool, str]:
+    """Ensure links strictly point Project -> Global (~/.omp/agent), never Global -> Project."""
+    g_resolved = global_agent.resolve()
+    try:
+        lp_resolved = link_path.resolve()
+        if lp_resolved == g_resolved or g_resolved in lp_resolved.parents:
+            return False, "Refusing link inside global ~/.omp/agent directory."
+    except OSError:
+        pass
+    if _is_link(target_path):
+        real_t = Path(os.path.realpath(target_path))
+        if real_t != g_resolved and g_resolved not in real_t.parents:
+            return False, "Global target is itself a link pointing outside ~/.omp/agent (reverse loop refused)."
+    try:
+        t_resolved = target_path.resolve()
+        if t_resolved != g_resolved and g_resolved not in t_resolved.parents:
+            return False, "Target resolves outside global ~/.omp/agent."
+    except OSError:
+        return False, "Unable to resolve global target path."
+    return True, ""
+
+
+def _same_volume(p1: Path, p2: Path) -> bool:
+    try:
+        return os.stat(p1).st_dev == os.stat(p2).st_dev
+    except OSError:
+        return False
+
+
+def _same_inode(p1: Path, p2: Path) -> bool:
+    try:
+        s1, s2 = os.stat(p1), os.stat(p2)
+        return s1.st_dev == s2.st_dev and s1.st_ino == s2.st_ino
+    except OSError:
+        return False
 
 
 def process_workspace_links(
@@ -90,6 +139,8 @@ def process_workspace_links(
     global_agent: Path,
     backup_root: Path,
     apply: bool = False,
+    prefer_hardlink: bool = False,
+    promote_missing: bool = False,
 ) -> Dict[str, Any]:
     actions: List[Dict[str, Any]] = []
     ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -116,11 +167,27 @@ def process_workspace_links(
                     ep = sp / ename
                     gep = gp / ename
                     if ename not in global_names:
-                        actions.append({"target": str(ep), "action": "refuse_unpromoted", "missing": [ename]})
+                        if promote_missing and ep.is_dir() and not _is_link(ep):
+                            ok_dir, reason = _validate_link_direction(ep, gp / ename, global_agent)
+                            if not ok_dir:
+                                actions.append({"target": str(ep), "action": "refuse_reverse_direction", "reason": reason})
+                                continue
+                            actions.append({"target": str(ep), "action": "promote_and_link", "globalTarget": str(gep), "applied": apply})
+                            if apply:
+                                gep.parent.mkdir(parents=True, exist_ok=True)
+                                shutil.copytree(ep, gep, symlinks=False, dirs_exist_ok=True)
+                                _snapshot_backup(ep, backup_root, ts)
+                                _make_dir_link(ep, gep)
+                        else:
+                            actions.append({"target": str(ep), "action": "refuse_unpromoted", "missing": [ename]})
                         continue
                     if not ep.is_dir() or not gep.is_dir():
                         continue
-                    if _is_link(ep):
+                    ok_dir, reason = _validate_link_direction(ep, gep, global_agent)
+                    if not ok_dir:
+                        actions.append({"target": str(ep), "action": "refuse_reverse_direction", "reason": reason})
+                        continue
+                    if _is_link(ep) and Path(os.path.realpath(ep)) == gep.resolve():
                         actions.append({"target": str(ep), "action": "already_linked", "globalTarget": str(gep)})
                         continue
                     actions.append({"target": str(ep), "action": "link_dir", "globalTarget": str(gep), "applied": apply})
@@ -130,15 +197,31 @@ def process_workspace_links(
             else:
                 if unpromoted and not set(local_entries).issubset(global_names):
                     synced = [n for n in local_entries if n in global_names]
-                    actions.append({"target": str(sp), "action": "hash_sync_fallback", "entries": synced, "keptLocal": unpromoted, "applied": apply})
+                    can_hardlink = prefer_hardlink and _same_volume(sp, gp)
+                    act_name = "hardlink_sync" if can_hardlink else "hash_sync_fallback"
+                    actions.append({"target": str(sp), "action": act_name, "entries": synced, "keptLocal": unpromoted, "applied": apply})
                     if apply:
                         for n in synced:
                             lf, gf = sp / n, gp / n
-                            if gf.is_file() and (not lf.is_file() or _sha256_file(lf) != _sha256_file(gf)):
+                            if not gf.is_file():
+                                continue
+                            ok_dir, reason = _validate_link_direction(lf, gf, global_agent)
+                            if not ok_dir:
+                                actions.append({"target": str(lf), "action": "refuse_reverse_direction", "reason": reason})
+                                continue
+                            if can_hardlink:
+                                if not lf.is_file() or not _same_inode(lf, gf):
+                                    _snapshot_backup(lf, backup_root, ts)
+                                    os.link(str(gf), str(lf))
+                            elif not lf.is_file() or _sha256_file(lf) != _sha256_file(gf):
                                 _snapshot_backup(lf, backup_root, ts)
                                 shutil.copy2(gf, lf)
                 elif local_entries:
-                    if _is_link(sp):
+                    ok_dir, reason = _validate_link_direction(sp, gp, global_agent)
+                    if not ok_dir:
+                        actions.append({"target": str(sp), "action": "refuse_reverse_direction", "reason": reason})
+                        continue
+                    if _is_link(sp) and Path(os.path.realpath(sp)) == gp.resolve():
                         actions.append({"target": str(sp), "action": "already_linked", "globalTarget": str(gp)})
                     else:
                         actions.append({"target": str(sp), "action": "link_dir", "globalTarget": str(gp), "applied": apply})
@@ -152,6 +235,7 @@ def process_workspace_links(
 def verify_links(cls: Dict[str, List[str]], global_agent: Path) -> Dict[str, Any]:
     broken: List[str] = []
     verified = 0
+    g_resolved = global_agent.resolve()
     for mirror in cls.get("shared_mirror", []):
         mp = Path(mirror)
         if not mp.is_dir():
@@ -160,7 +244,8 @@ def verify_links(cls: Dict[str, List[str]], global_agent: Path) -> Dict[str, Any
             sp = mp / sub
             gp = global_agent / sub
             if _is_link(sp):
-                if os.path.exists(os.path.realpath(sp)):
+                real_sp = Path(os.path.realpath(sp))
+                if real_sp.exists() and (real_sp == g_resolved or g_resolved in real_sp.parents):
                     verified += 1
                 else:
                     broken.append(str(sp))
@@ -169,23 +254,25 @@ def verify_links(cls: Dict[str, List[str]], global_agent: Path) -> Dict[str, Any
                 continue
             for ep in sp.iterdir():
                 if _is_link(ep):
-                    if os.path.exists(os.path.realpath(ep)):
+                    real_ep = Path(os.path.realpath(ep))
+                    if real_ep.exists() and (real_ep == g_resolved or g_resolved in real_ep.parents):
                         verified += 1
                     else:
                         broken.append(str(ep))
                 elif ep.is_file() and (gp / ep.name).is_file():
-                    if _sha256_file(ep) == _sha256_file(gp / ep.name):
+                    if _same_inode(ep, gp / ep.name) or _sha256_file(ep) == _sha256_file(gp / ep.name):
                         verified += 1
                     else:
                         broken.append(str(ep))
     return {"valid": len(broken) == 0, "verifiedCount": verified, "brokenLinks": len(broken), "brokenPaths": broken}
-
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Opt-in local reference linker pointing shared mirrors to ~/.omp/agent/.")
     parser.add_argument("--plan", action="store_true", help="Dry-run plan (default).")
     parser.add_argument("--apply", action="store_true", help="Apply snapshots and junction/symlink or hash-sync updates.")
     parser.add_argument("--verify", action="store_true", help="Verify all linked and hash-synced mirrors.")
+    parser.add_argument("--prefer-hardlink", action="store_true", help="Prefer same-volume hardlinks for mixed .md files.")
+    parser.add_argument("--promote-missing", action="store_true", help="Opt-in: promote missing local skills to global before linking.")
     parser.add_argument("--json", action="store_true", help="Emit structured JSON output.")
     parser.add_argument("--no-local-config", action="store_true")
     parser.add_argument("--config", default=str(Path(__file__).resolve().parent.parent / "config" / "harvest-workspaces.json"))
@@ -195,14 +282,19 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     cls = _load_classification(Path(args.config), no_local=args.no_local_config)
     g_agent = Path(os.path.expanduser(args.global_agent_dir))
-    res = verify_links(cls, g_agent) if args.verify else process_workspace_links(cls, g_agent, Path(args.backup_dir), apply=bool(args.apply))
+    res = verify_links(cls, g_agent) if args.verify else process_workspace_links(
+        cls,
+        g_agent,
+        Path(args.backup_dir),
+        apply=bool(args.apply),
+        prefer_hardlink=bool(args.prefer_hardlink),
+        promote_missing=bool(args.promote_missing),
+    )
 
     if args.json:
         print(json.dumps(res, indent=2, ensure_ascii=False))
     else:
         print(json.dumps(res, indent=2, ensure_ascii=False))
     return 0 if (res.get("valid", True)) else 1
-
-
 if __name__ == "__main__":
     sys.exit(main())

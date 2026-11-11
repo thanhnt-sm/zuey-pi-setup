@@ -159,13 +159,55 @@ while IFS= read -r var; do
 done < "$PROVIDER_ENV_VARS"
 rm -f "$PROVIDER_ENV_VARS"
 
-# 4. Copy static JSON agent configs (commandcode-models.json, typesafe.json, mcp.json, tools-requirements.txt)
-for cfg in commandcode-models.json typesafe.json mcp.json tools-requirements.txt; do
+# 4. Copy static JSON agent configs (NEVER copy raw live mcp.json; emit sanitized mcp.json.example instead)
+for cfg in commandcode-models.json typesafe.json mcp.json.example tools-requirements.txt; do
 	if [ -f "$OMP_SRC/agent/$cfg" ]; then
 		echo "-> Copying agent/$cfg..."
 		tr -d '\r' < "$OMP_SRC/agent/$cfg" > "$STAGE_DIR/agent/$cfg"
 	fi
 done
+if [ -f "$OMP_SRC/agent/mcp.json" ] && [ ! -f "$STAGE_DIR/agent/mcp.json.example" ]; then
+	echo "-> Generating sanitized agent/mcp.json.example from mcp.json..."
+	MCP_PY=""
+	for _py in python3 python; do
+		if command -v "$_py" >/dev/null 2>&1 && "$_py" -c "import json" >/dev/null 2>&1; then
+			MCP_PY="$_py"
+			break
+		fi
+	done
+	if [ -n "$MCP_PY" ]; then
+		"$MCP_PY" - "$(norm_path "$OMP_SRC/agent/mcp.json")" "$(norm_path "$STAGE_DIR/agent/mcp.json.example")" "$(norm_path "${HOME:-${USERPROFILE:-}}")" <<'PY'
+import json, os, pathlib, re, sys
+src, dst, home_arg = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3].rstrip("/\\")
+homes = {h for h in (home_arg, os.path.expanduser("~").replace("\\", "/"), os.environ.get("USERPROFILE", "").replace("\\", "/")) if h}
+txt = src.read_text(encoding="utf-8", errors="ignore")
+for h in sorted(homes, key=len, reverse=True):
+    h_bs = h.replace("/", "\\")
+    for pat in (
+        re.escape(h) + r"/\.claude/runtime/node/node(?:\.exe)?",
+        re.escape(h_bs) + r"\\+\.claude\\+runtime\\+node\\+node(?:\.exe)?",
+        re.escape(h.replace("/", "\\\\")) + r"\\\\\.claude\\\\runtime\\\\node\\\\node(?:\.exe)?",
+    ):
+        txt = re.sub(pat, "{{OMP_NODE}}", txt, flags=re.IGNORECASE)
+    for h_pat in (re.escape(h), re.escape(h.replace("/", "\\\\")), re.escape(h_bs)):
+        txt = re.sub(h_pat, "{{USER_HOME}}", txt, flags=re.IGNORECASE)
+try:
+    data = json.loads(txt)
+    for srv in (data.get("mcpServers") or {}).values():
+        if isinstance(srv, dict):
+            cmd = str(srv.get("command") or "")
+            if cmd.endswith(("node", "node.exe")) and ("/" in cmd or "\\" in cmd):
+                srv["command"] = "{{OMP_NODE}}"
+            if isinstance(srv.get("env"), dict):
+                for k in list(srv["env"].keys()):
+                    if any(tok in k.upper() for tok in ("KEY", "TOKEN", "SECRET", "PASS")):
+                        srv["env"][k] = ""
+    dst.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8", newline="\n")
+except Exception:
+    dst.write_text(txt.replace("\\", "/"), encoding="utf-8", newline="\n")
+PY
+	fi
+fi
 
 # 5. Copy extensions/ with recursive relative-import shim dereferencing
 ABS_IMPORT_RE="(from|import|require\\()[[:space:]]*[\"'](([A-Za-z]:[/\\\\])|/)[^\"']+[\"']"

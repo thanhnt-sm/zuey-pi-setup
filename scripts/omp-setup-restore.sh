@@ -225,10 +225,11 @@ if [ -d "$STAGE_DIR/agent/extensions" ]; then
 		[ -d "$ext_dir" ] || continue
 		name="$(basename "$ext_dir")"
 		for f in "$TARGET_DIR/agent/extensions/$name.ts" "$TARGET_DIR/agent/extensions/$name.js"; do
-			if [ -f "$f" ]; then
+			base_f="$(basename "$f")"
+			if [ -f "$f" ] && [ ! -f "$STAGE_DIR/agent/extensions/$base_f" ]; then
 				mkdir -p "$RESTORE_BACKUP_DIR/agent/extensions"
 				mv "$f" "$RESTORE_BACKUP_DIR/agent/extensions/"
-				echo "-> Replaced single-file extension $(basename "$f") with directory $name/"
+				echo "-> Replaced single-file extension $base_f with directory $name/"
 			fi
 		done
 	done
@@ -326,6 +327,62 @@ if [ ! -f "$TARGET_DIR/agent/.env" ] && [ -f "$TARGET_DIR/agent/.env.example" ];
 	cp "$TARGET_DIR/agent/.env.example" "$TARGET_DIR/agent/.env"
 	echo "⚠️  REMINDER: Please edit $TARGET_DIR/agent/.env and enter your API keys."
 fi
+# 7b. Initialize mcp.json from mcp.json.example ONLY when absent, rehydrating {{USER_HOME}} and {{OMP_NODE}}
+if [ ! -f "$TARGET_DIR/agent/mcp.json" ] && [ -f "$TARGET_DIR/agent/mcp.json.example" ]; then
+	TARGET_HOME_BASE="${HOME:-${USERPROFILE:-$TARGET_DIR}}"
+	TARGET_HOME_NAT="$(native_path "$TARGET_HOME_BASE")"
+	TARGET_OMP_NODE="node"
+	case "$OS_TYPE" in
+		MINGW*|MSYS*|CYGWIN*|Windows_NT*)
+			if [ -x "$TARGET_HOME_BASE/.claude/runtime/node/node.exe" ]; then
+				TARGET_OMP_NODE="$TARGET_HOME_NAT/.claude/runtime/node/node.exe"
+			elif command -v node >/dev/null 2>&1; then
+				TARGET_OMP_NODE="$(native_path "$(command -v node)")"
+			fi
+			;;
+		*)
+			for cand in \
+				"/opt/homebrew/bin/node" \
+				"/usr/local/bin/node" \
+				"$TARGET_HOME_BASE/.volta/bin/node" \
+				"$TARGET_HOME_BASE/.nvm/versions/node"/*/bin/node \
+				"$TARGET_HOME_BASE/.fnm/node-versions"/*/installation/bin/node \
+				"$TARGET_HOME_BASE/.local/share/mise/installs/node"/*/bin/node; do
+				if [ -n "$cand" ] && [ -x "$cand" ]; then
+					TARGET_OMP_NODE="$cand"
+					break
+				fi
+			done
+			if [ "$TARGET_OMP_NODE" = "node" ] && command -v node >/dev/null 2>&1; then
+				TARGET_OMP_NODE="$(native_path "$(command -v node)")"
+			fi
+			;;
+	esac
+	echo "-> Initializing agent/mcp.json from mcp.json.example (node=$TARGET_OMP_NODE)..."
+	MCP_RENDER_PY=""
+	for _py in python3 python; do
+		if command -v "$_py" >/dev/null 2>&1 && "$_py" -c "import pathlib" >/dev/null 2>&1; then
+			MCP_RENDER_PY="$_py"
+			break
+		fi
+	done
+	if [ -n "$MCP_RENDER_PY" ]; then
+		"$MCP_RENDER_PY" - "$(native_path "$TARGET_DIR/agent/mcp.json.example")" "$(native_path "$TARGET_DIR/agent/mcp.json")" "$TARGET_OMP_NODE" "$TARGET_HOME_NAT" <<'PY'
+import pathlib, sys
+src, dst = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+node_bin = sys.argv[3].replace("\\", "/")
+home_dir = sys.argv[4].rstrip("/\\").replace("\\", "/")
+txt = src.read_text(encoding="utf-8", errors="ignore")
+txt = txt.replace("{{OMP_NODE}}", node_bin).replace("{{USER_HOME}}", home_dir)
+dst.write_text(txt, encoding="utf-8", newline="\n")
+PY
+	else
+		ESC_NODE="$(printf '%s' "$TARGET_OMP_NODE" | sed -e 's/[\\&|]/\\&/g')"
+		ESC_HOME="$(printf '%s' "${TARGET_HOME_NAT%/}" | sed -e 's/[\\&|]/\\&/g')"
+		sed -e "s|{{OMP_NODE}}|$ESC_NODE|g" -e "s|{{USER_HOME}}|$ESC_HOME|g" \
+			"$TARGET_DIR/agent/mcp.json.example" > "$TARGET_DIR/agent/mcp.json"
+	fi
+fi
 
 # 8. Hydrate plugins & Python tools-venv if requested (NO_INSTALL=0)
 if [ "$NO_INSTALL" -eq 0 ]; then
@@ -339,6 +396,7 @@ if [ "$NO_INSTALL" -eq 0 ]; then
 		echo "-> Hydrating plugins in $TARGET_DIR/plugins..."
 		(
 			cd "$TARGET_DIR/plugins"
+
 			if command -v bun >/dev/null 2>&1; then
 				echo "Running 'bun install'..."
 				bun install

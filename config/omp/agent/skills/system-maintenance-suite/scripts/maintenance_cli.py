@@ -11,11 +11,13 @@ import sys
 from pathlib import Path
 from typing import Any, List, Optional
 
+sys.dont_write_bytecode = True
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from cleaner_dispatcher import run_cleanup  # noqa: E402
+from cleaner_dispatcher import find_orphan_leftovers, find_stale_project_artifacts, run_cleanup  # noqa: E402
 from uninstaller_builder import generate_uninstaller_suite  # noqa: E402
 
 
@@ -37,6 +39,16 @@ def run_command(args: argparse.Namespace) -> int:
             return 0
         if cmd == "clean":
             res = run_cleanup(mode=args.mode, dry_run=args.dry_run, force=args.force, os_override=args.os)
+            _emit(res, args.json)
+            return 0
+        if cmd == "stale-scan":
+            roots = [Path(r) for r in (args.roots or [str(Path.home())])]
+            res = find_stale_project_artifacts(roots, stale_days=args.stale_days)
+            _emit(res, args.json)
+            return 0
+        if cmd == "orphan-scan":
+            roots = [Path(r) for r in args.roots] if args.roots else None
+            res = {"orphans": find_orphan_leftovers(search_dirs=roots, os_kind=args.os)}
             _emit(res, args.json)
             return 0
         if cmd == "generate-uninstaller":
@@ -91,12 +103,14 @@ def run_interactive_menu() -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="OMP System Maintenance Suite Dual-Mode CLI")
-    p.add_argument("--cmd", choices=["analyze", "clean", "generate-uninstaller"])
-    p.add_argument("--mode", default="quick", choices=["quick", "dev", "system", "full"])
+    p.add_argument("--cmd", choices=["analyze", "clean", "stale-scan", "orphan-scan", "generate-uninstaller"])
+    p.add_argument("--mode", default="quick", choices=["quick", "dev", "system", "extended", "full"])
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--force", action="store_true", help="Explicit authorization for cache deletion")
     p.add_argument("--os", default=None, help="Override OS detection (windows|darwin|linux)")
+    p.add_argument("--roots", nargs="*", default=None, help="Workspace roots for stale-scan / orphan-scan")
     p.add_argument("--tool", help="Target tool name for uninstaller generation")
+    p.add_argument("--stale-days", type=int, default=90, help="Inactivity threshold in days for stale-scan")
     p.add_argument("--package", default="", help="npm/brew/winget package id")
     p.add_argument("--output", help="Output directory for generated uninstallers")
     p.add_argument("--json", action="store_true")

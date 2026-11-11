@@ -222,4 +222,33 @@ OS_OVERRIDE="Darwin" "$BASH" "$RESTORE_SCRIPT" --home "$P4_RESTORE" "$P4_CLAUDE_
 grep -qE "\.nvm/versions/node/v22\.11\.0/bin/node" "$P4_RESTORE/.claude/settings.json" || fail "Darwin nvm node probe failed: $(cat "$P4_RESTORE/.claude/settings.json")"
 echo "✓ PASS: Phase 4 scratch bank filter, --sessions staging & Darwin nvm node probe passed."
 
+echo "=== [TDD] Phase 4: private backup/restore rehydrates ~/.omp/agent/mcp.json across OS ==="
+MCP_PRIV_SRC_HOME="$TEST_TMP/mcp_priv_src"
+MCP_PRIV_DST_HOME="$TEST_TMP/mcp_priv_dst"
+mkdir -p "$MCP_PRIV_SRC_HOME/.omp/agent" "$MCP_PRIV_SRC_HOME/.claude/mcp/typesafe" "$MCP_PRIV_SRC_HOME/.claude/hooks/lib"
+mkdir -p "$MCP_PRIV_DST_HOME/.nvm/versions/node/v22.11.0/bin" "$MCP_PRIV_DST_HOME/.omp/agent"
+printf '#!/bin/sh\necho node\n' > "$MCP_PRIV_DST_HOME/.nvm/versions/node/v22.11.0/bin/node"
+chmod +x "$MCP_PRIV_DST_HOME/.nvm/versions/node/v22.11.0/bin/node"
+echo 'export default {}' > "$MCP_PRIV_SRC_HOME/.claude/mcp/typesafe/srv.cjs"
+echo 'module.exports = {}' > "$MCP_PRIV_SRC_HOME/.claude/hooks/lib/typesafe-enabled-resolver.cjs"
+echo '{}' > "$MCP_PRIV_SRC_HOME/.claude/.ck.json"
+MCP_PRIV_WIN_SRC="$MCP_PRIV_SRC_HOME"
+if command -v cygpath >/dev/null 2>&1; then
+  MCP_PRIV_WIN_SRC="$(cygpath -m "$MCP_PRIV_SRC_HOME")"
+fi
+python -c "
+import pathlib
+p = pathlib.Path('$MCP_PRIV_WIN_SRC/.omp/agent/mcp.json')
+h = '$MCP_PRIV_WIN_SRC'.replace('\\\\', '/')
+p.write_text('{\"mcpServers\":{\"typesafe\":{\"type\":\"stdio\",\"command\":\"' + h + '/.claude/runtime/node/node.exe\",\"args\":[\"' + h + '/.claude/mcp/typesafe/srv.cjs\"]}}}', encoding='utf-8')
+"
+echo '{"mcpServers":{"old":{"command":"old-cmd"}}}' > "$MCP_PRIV_DST_HOME/.omp/agent/mcp.json"
+MCP_PRIV_ARC="$TEST_TMP/mcp-priv-kit.tar.gz"
+"$BASH" "$ROOT/scripts/omp-private-backup.sh" --source "$MCP_PRIV_SRC_HOME/.omp" --home "$MCP_PRIV_SRC_HOME" --typesafe-kit --no-encrypt -o "$MCP_PRIV_ARC"
+OS_OVERRIDE="Darwin" "$BASH" "$RESTORE_SCRIPT" --home "$MCP_PRIV_DST_HOME" "$MCP_PRIV_ARC"
+grep -qE "\.nvm/versions/node/v22\.11\.0/bin/node" "$MCP_PRIV_DST_HOME/.omp/agent/mcp.json" || fail "mcp.json node rehydration failed on Darwin: $(cat "$MCP_PRIV_DST_HOME/.omp/agent/mcp.json")"
+! grep -qi "mcp_priv_src" "$MCP_PRIV_DST_HOME/.omp/agent/mcp.json" || fail "mcp.json still contains source user home path"
+find "$MCP_PRIV_DST_HOME/.omp/restore-backups" -name "mcp.json" | grep -q "mcp.json" || fail "pre-existing mcp.json not backed up before private restore overwrite"
+echo "✓ PASS: private backup/restore templatizes, backs up, and rehydrates mcp.json cleanly."
+
 echo "=== ALL TDD TESTS PASSED ==="

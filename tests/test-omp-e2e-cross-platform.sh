@@ -93,4 +93,28 @@ echo '{"status":"COMPLETED","suites":{}}' > "$ISO_HOME/.omp/agent/omp-consolidat
 (cd "$ISO_CWD" && env -u ZUEY_PI_REPO HOME="$ISO_HOME" USERPROFILE="$ISO_HOME" \
   "$PY_BIN" "$TGT_MAC/agent/skills/omp-session-harvester/scripts/harvest_cli.py" --next | grep -q '"COMPLETED"')
 
+echo "=== [E2E] Phase 4: omp-doctor.py & omp-bootstrap.sh unified validation ==="
+DOCTOR_SCRIPT="$ROOT/scripts/omp-doctor.py"
+BOOTSTRAP_SH="$ROOT/scripts/omp-bootstrap.sh"
+BOOTSTRAP_PS1="$ROOT/scripts/omp-bootstrap.ps1"
+test -f "$DOCTOR_SCRIPT" || { echo "FAIL: Missing $DOCTOR_SCRIPT" >&2; exit 1; }
+test -f "$BOOTSTRAP_SH" || { echo "FAIL: Missing $BOOTSTRAP_SH" >&2; exit 1; }
+test -f "$BOOTSTRAP_PS1" || { echo "FAIL: Missing $BOOTSTRAP_PS1" >&2; exit 1; }
+
+# 1) Doctor flags unexpanded/Windows paths inside Darwin mcp.json
+echo '{"mcpServers":{"bad":{"command":"C:\\Users\\demo\\node.exe"}}}' > "$TGT_MAC/agent/mcp.json"
+set +e
+OS_OVERRIDE="Darwin" "$PY_BIN" "$DOCTOR_SCRIPT" --target-dir "$TGT_MAC" --repo-dir "$ROOT" --json > "$TEST_TMP/doc_bad.json"
+doc_bad_rc=$?
+set -e
+[ "$doc_bad_rc" -ne 0 ] || { echo "FAIL: omp-doctor must fail when Darwin mcp.json contains Windows path"; exit 1; }
+
+# 2) Bootstrap --mode restore --skip-pull --no-install + --mode doctor on clean target
+BOOT_TGT="$TEST_TMP/boot_omp"
+"$BASH" "$BOOTSTRAP_SH" --mode restore --skip-pull --no-install --target-dir "$BOOT_TGT" --home "$TEST_TMP/boot_home" --no-local-config >/dev/null
+test -f "$BOOT_TGT/agent/mcp.json" || { echo "FAIL: bootstrap restore missing mcp.json"; exit 1; }
+"$PY_BIN" "$DOCTOR_SCRIPT" --target-dir "$BOOT_TGT" --repo-dir "$ROOT" --no-local-config --json | grep -q '"ok": true'
+grep -q "System32" "$BOOTSTRAP_PS1" || { echo "FAIL: omp-bootstrap.ps1 must guard against WSL System32\\bash.exe"; exit 1; }
+echo "✓ PASS: Phase 4 omp-doctor.py and omp-bootstrap.{sh,ps1} verified."
+
 echo "=== ALL CROSS-OS E2E VALIDATION TESTS PASSED ==="

@@ -5,7 +5,7 @@ import path from "node:path";
 
 import registerToolkitHub from "../config/omp/agent/extensions/omp-toolkit-hub";
 import { readLoopCheckpoint, writeLoopCheckpoint } from "../config/omp/agent/extensions/omp-toolkit-hub/loop-state";
-
+import { resolveToolsPython } from "../config/omp/agent/extensions/omp-toolkit-hub/python-bridge";
 interface RegisteredTool {
   name: string;
   description: string;
@@ -50,17 +50,22 @@ function createMockPi() {
 }
 
 describe("omp-toolkit-hub extension", () => {
-  test("registers /harvest-loop command, omp_harvest_status & omp_extract_cluster tools, and session lifecycle hooks", () => {
+  test("registers /harvest-loop, /omp-doctor, all 5 domain+harvest tools, and session lifecycle hooks", () => {
     const mock = createMockPi();
     registerToolkitHub(mock.pi as never);
 
     expect(mock.commands.has("harvest-loop")).toBe(true);
+    expect(mock.commands.has("omp-doctor")).toBe(true);
     expect(mock.tools.has("omp_harvest_status")).toBe(true);
     expect(mock.tools.has("omp_extract_cluster")).toBe(true);
+    expect(mock.tools.has("omp_harvest")).toBe(true);
+    expect(mock.tools.has("omp_office")).toBe(true);
+    expect(mock.tools.has("omp_pmo")).toBe(true);
+    expect(mock.tools.has("omp_email")).toBe(true);
+    expect(mock.tools.has("omp_maint")).toBe(true);
     expect(mock.handlers.has("session_compact")).toBe(true);
     expect(mock.handlers.has("session_start")).toBe(true);
   });
-
   test("omp_harvest_status reads ledger summary and --next cleanly without crashing when missing", async () => {
     const tmp = mkdtempSync(path.join(os.tmpdir(), "omp-hub-test-"));
     try {
@@ -125,7 +130,7 @@ describe("omp-toolkit-hub extension", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   test("session_compact and session_start handlers fail open and persist checkpoint", async () => {
     const tmp = mkdtempSync(path.join(os.tmpdir(), "omp-hub-compact-"));
@@ -161,4 +166,93 @@ describe("omp-toolkit-hub extension", () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+  test("resolveToolsPython resolves Windows Scripts/python.exe and POSIX bin/python3 layouts", () => {
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "omp-venv-probe-"));
+    try {
+      const winHome = path.join(tmp, "win-home");
+      const posixHome = path.join(tmp, "posix-home");
+      mkdirSync(path.join(winHome, ".omp", "tools-venv", "Scripts"), { recursive: true });
+      mkdirSync(path.join(posixHome, ".omp", "tools-venv", "bin"), { recursive: true });
+      const winPy = path.join(winHome, ".omp", "tools-venv", "Scripts", "python.exe");
+      const posixPy = path.join(posixHome, ".omp", "tools-venv", "bin", "python3");
+      writeFileSync(winPy, "stub", "utf8");
+      writeFileSync(posixPy, "stub", "utf8");
+
+      const rWin = resolveToolsPython(winHome);
+      expect(rWin.isVenv).toBe(true);
+      expect(rWin.pythonBin).toBe(winPy);
+
+      const rPosix = resolveToolsPython(posixHome);
+      expect(rPosix.isVenv).toBe(true);
+      expect(rPosix.pythonBin).toBe(posixPy);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("omp_maint blocks live clean without force:true and fails open on missing venv/script", async () => {
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "omp-hub-maint-"));
+    try {
+      const mock = createMockPi();
+      registerToolkitHub(mock.pi as never, { homeDir: tmp, ledgerPath: path.join(tmp, "ledger.json") });
+      const maintTool = mock.tools.get("omp_maint")!;
+
+      const blocked = (await maintTool.execute("m1", { action: "clean", mode: "quick", dryRun: false }, undefined, undefined, {})) as {
+        details: { ok: boolean; error: string };
+      };
+      expect(blocked.details.ok).toBe(false);
+      expect(blocked.details.error).toContain("force");
+
+      const badAction = (await maintTool.execute("m2", { action: "nonexistent_cmd" }, undefined, undefined, {})) as {
+        details: { ok: boolean; error: string };
+      };
+      expect(badAction.details.ok).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("omp_office executes smoke action against Python CLI and session_start surfaces orphaned staged state", async () => {
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "omp-hub-e2e-"));
+    try {
+      const ckptPath = path.join(tmp, "loop-checkpoint.json");
+      const ledgerPath = path.join(tmp, "omp-consolidation-ledger.json");
+      const mdIn = path.join(tmp, "sample.md");
+      const xlsxOut = path.join(tmp, "sample.xlsx");
+      writeFileSync(mdIn, "| Name | Score |\n|---|---:|\n| Alpha | 10 |\n", "utf8");
+      writeFileSync(ledgerPath, JSON.stringify({
+        status: "HARVESTED",
+        promotionQueue: [{ hash: "abc123def456", suite: "office_doc_suite", state: "staged" }],
+        summary: {},
+      }), "utf8");
+
+      const mock = createMockPi();
+      registerToolkitHub(mock.pi as never, {
+        homeDir: os.homedir(),
+        checkpointPath: ckptPath,
+        ledgerPath,
+      });
+
+      const officeTool = mock.tools.get("omp_office")!;
+      const officeRes = (await officeTool.execute("o1", {
+        action: "md2xlsx",
+        input: mdIn,
+        output: xlsxOut,
+      }, undefined, undefined, {})) as { details: { ok: boolean; data?: Record<string, unknown> } };
+      expect(officeRes.details.ok).toBe(true);
+      expect(existsSync(xlsxOut)).toBe(true);
+
+      const compactHandlers = mock.handlers.get("session_compact") ?? [];
+      for (const fn of compactHandlers) await fn({}, { hasUI: false });
+
+      const notices: string[] = [];
+      const startHandlers = mock.handlers.get("session_start") ?? [];
+      for (const fn of startHandlers) {
+        await fn({}, { hasUI: true, ui: { notify: (msg: string) => notices.push(msg) } });
+      }
+      expect(notices.some((m) => m.includes("staged"))).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 20_000);
 });

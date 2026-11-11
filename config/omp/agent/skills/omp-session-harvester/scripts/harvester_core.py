@@ -47,14 +47,23 @@ SUITE_PATTERNS: Dict[str, List[str]] = {
         r"cleanpc", r"wiztree", r"uninstaller", r"disk_usage",
         r"windows-cleanup", r"macos-cleanup", r"clean_temp", r"dev_cache",
         r"ai-tool-uninstaller", r"macos[-_]clean", r"windows_fix",
+        r"Test-VpnConnection", r"\bdism\b", r"scan_stale", r"quarantine",
+        r"orphan", r"brew\s+cleanup", r"cleanup_",
+    ],
+    "dev_ops_automation": [
+        r"\bsvn\b", r"react[-_]?native", r"\bmetro\b", r"\bpodfile\b", r"\bgradle\b",
+        r"sync[-_]svn", r"apply[-_]source[-_]edits", r"git[-_ ]worktree",
+        r"omp[-_]link", r"omp[-_]bootstrap", r"omp[-_]doctor", r"harvester",
+        r"sqlite_master", r"db_schema", r"postgres", r"migration",
     ],
 }
 
 PATH_AFFINITIES = [
     (re.compile(r"(email[-_]export|email[-_]intelligence)", re.IGNORECASE), "email_intelligence_suite", 10),
     (re.compile(r"(project[-_]excel[-_]sync|pmi[-_]pmo|pmo|note[-_]multiline|schedule_calc)", re.IGNORECASE), "pmo_project_suite", 10),
-    (re.compile(r"(cleanpc|wiztree|uninstaller|cleanup|windows_fix)", re.IGNORECASE), "system_maintenance_suite", 10),
-    (re.compile(r"(document[-_]analysis|spatial|md[-_]convert|docx|pdf|kpi[-_]|bbox)", re.IGNORECASE), "office_doc_suite", 10),
+    (re.compile(r"(cleanpc|wiztree|uninstaller|cleanup|windows_fix|vpn|stale)", re.IGNORECASE), "system_maintenance_suite", 10),
+    (re.compile(r"(document[-_]analysis|spatial|md[-_]convert|docx|pdf|kpi[-_]|bbox|drawio|mermaid)", re.IGNORECASE), "office_doc_suite", 10),
+    (re.compile(r"(svn|react[-_]?native|harvester|bootstrap|doctor|link-local|migration)", re.IGNORECASE), "dev_ops_automation", 10),
 ]
 
 CODE_EXTS = (".py", ".ps1", ".sh", ".ts", ".js", ".cjs", ".mjs", ".bat", ".cmd", ".psm1")
@@ -66,6 +75,64 @@ EVAL_CODE_INDICATORS = (
     "pypdf", "sqlite3", "subprocess", "shutil", "wbs", "cpm", "evm", "raid",
     "ConvertFrom-", "New-Object",
 )
+
+_TEST_RUNNER_BASENAME_RE = re.compile(
+    r"^(?:self-test\.[^/]+|simulate_[^/]+|[^/]+\.(?:test|spec)\.[^/]+|test_[^/]+\.(?:py|ts|js|cjs|mjs|sh))$",
+    re.IGNORECASE,
+)
+_SCRATCHPAD_PATH_RE = re.compile(r"(?:^|[\\/])scratchpad(?:[\\/]|$)", re.IGNORECASE)
+_INLINE_TEMP_RE = re.compile(r"^(?:inline_(?:node|bun|python3?|pwsh|powershell)_[0-9a-f]{6,})", re.IGNORECASE)
+_EVAL_TEST_KEYWORDS_RE = re.compile(
+    r"(?:\bunittest\b|\bpytest\b|bun:test|\bassertEqual\b|\bassertTrue\b|\bdescribe\s*\(|\bsimulate_[A-Za-z0-9_]+)"
+)
+_DEF_OR_CLASS_RE = re.compile(r"\b(?:def |class |function |export )\b")
+
+
+def classify_artifact_noise(target_or_desc: Any, code: str = "") -> Optional[str]:
+    """Classify ephemeral edit hunks, one-off test runners, and scratchpad snippets."""
+    if isinstance(target_or_desc, dict):
+        tool = str(target_or_desc.get("tool", ""))
+        target = str(target_or_desc.get("toolKey") or target_or_desc.get("target") or "")
+        body = code or str(target_or_desc.get("snippet_preview") or "")
+    else:
+        tool = ""
+        target = str(target_or_desc or "")
+        body = code or ""
+
+    norm_target = target.replace("\\", "/")
+    if tool in ("edit", "Edit") or re.search(r"#edit\d+$", norm_target):
+        return "edit_hunk"
+    if _SCRATCHPAD_PATH_RE.search(norm_target):
+        return "scratchpad"
+
+    clean_path = norm_target.split("#", 1)[0]
+    base = clean_path.rsplit("/", 1)[-1]
+    if _TEST_RUNNER_BASENAME_RE.search(base):
+        return "test_runner"
+    if _INLINE_TEMP_RE.search(base):
+        non_empty = [ln for ln in body.splitlines() if ln.strip()]
+        if len(non_empty) < 20 or not re.search(r"\b(?:function |class )\b", body):
+            return "inline_temp"
+    if base.startswith("eval_") or tool == "eval":
+        if _EVAL_TEST_KEYWORDS_RE.search(body):
+            return "eval_test_runner"
+        non_empty = [ln for ln in body.splitlines() if ln.strip()]
+        if body and len(non_empty) < 10 and not _DEF_OR_CLASS_RE.search(body):
+            return "eval_short_snippet"
+    return None
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write(content)
+        f.flush()
+    os.replace(tmp, path)
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    _atomic_write_text(path, json.dumps(payload, indent=2, ensure_ascii=False))
 
 SENSITIVE_PATTERNS: List[Tuple[re.Pattern[str], Any]] = [
     (re.compile(r"(sk-ant-[A-Za-z0-9_-]{16,}|sk-proj-[A-Za-z0-9_-]{12,}|sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{35}|ya29\.[0-9A-Za-z_-]{20,}|tvly-[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]+)"), "[REDACTED_API_KEY]"),
@@ -429,6 +496,7 @@ class SessionHarvester:
         no_local_config: bool = False,
         full_rescan: bool = False,
         include_advisors: bool = False,
+        include_noise: bool = False,
     ):
         self.sessions_dir = (
             os.path.expanduser("~/.omp/agent/sessions")
@@ -455,6 +523,7 @@ class SessionHarvester:
         self.no_local_config = no_local_config
         self.full_rescan = full_rescan
         self.include_advisors = include_advisors
+        self.include_noise = include_noise
         self.config = self._load_config()
         self.priv_pat = _private_terms_pattern(self.config, allow_local=not self.no_local_config)
         self.ledger_path = ledger_path if ledger_path is not None else def_ledger
@@ -539,6 +608,7 @@ class SessionHarvester:
         c_hash = compute_code_hash(code_content)
         suite = classify_snippet(code_content, target_path)
         sanitized = sanitize_text(code_content, priv_pat=self.priv_pat)
+        noise_reason = classify_artifact_noise({"tool": tool_kind, "toolKey": tool_key, "target": target_path}, code_content)
         norm_rel = session_rel.replace("\\", "/")
         return {
             "source": source_kind,
@@ -552,6 +622,9 @@ class SessionHarvester:
             "hash": c_hash,
             "lines": len(code_content.splitlines()),
             "bytes": len(code_content),
+            "isNoise": bool(noise_reason),
+            "noiseCategory": "ephemeral_noise" if noise_reason else "signal",
+            "noiseReason": noise_reason,
             "snippet_preview": sanitized[:200].replace("\n", " ") + ("..." if len(sanitized) > 200 else ""),
         }
 
@@ -580,7 +653,13 @@ class SessionHarvester:
         arts = wm.get("artifacts", [])
         for art in arts:
             if isinstance(art, dict) and art.get("hash"):
-                self._register_artifact(dict(art))
+                item = dict(art)
+                if "isNoise" not in item:
+                    nr = classify_artifact_noise(item)
+                    item["isNoise"] = bool(nr)
+                    item["noiseCategory"] = "ephemeral_noise" if nr else "signal"
+                    item["noiseReason"] = nr
+                self._register_artifact(item)
         self.file_watermarks[wm_key] = wm
 
     def scan_omp_sessions(self) -> None:
@@ -819,15 +898,20 @@ class SessionHarvester:
                             content = f.read()
                         c_hash = compute_code_hash(content)
                         suite = classify_snippet(content, fp)
+                        norm_target = sanitize_path(fp, priv_pat=self.priv_pat)
+                        noise_reason = classify_artifact_noise({"tool": "file", "target": norm_target}, content)
                         artifact = {
                             "source": "workspace",
                             "session": "local_workspace",
                             "tool": "file",
-                            "target": sanitize_path(fp, priv_pat=self.priv_pat),
+                            "target": norm_target,
                             "suite": suite,
                             "hash": c_hash,
                             "lines": len(content.splitlines()),
                             "bytes": sz,
+                            "isNoise": bool(noise_reason),
+                            "noiseCategory": "ephemeral_noise" if noise_reason else "signal",
+                            "noiseReason": noise_reason,
                             "snippet_preview": sanitize_text(content[:200].replace("\n", " "), priv_pat=self.priv_pat) + "...",
                         }
                         self.harvested_artifacts.append(artifact)
@@ -989,15 +1073,255 @@ class SessionHarvester:
             raise RuntimeError(f"Unable to extract source body for hash {cluster_hash}")
         return {"ok": True, "hash": cluster_hash, "written": written}
 
-    def update_ledger(self) -> None:
+    def _load_ledger_doc(self) -> Dict[str, Any]:
         if not os.path.exists(self.ledger_path):
-            ledger: Dict[str, Any] = {"version": "2.0.0", "suites": {}, "summary": {}, "promotedHashes": {}}
-        else:
-            with open(self.ledger_path, "r", encoding="utf-8") as f:
-                ledger = json.load(f)
+            return {
+                "version": "2.2.0",
+                "suites": {},
+                "summary": {},
+                "promotedHashes": {},
+                "clusterDispositions": {},
+                "promotionQueue": [],
+                "loopMeta": {"round": 0, "lastRoundAt": None, "maxRounds": 20, "zeroDeltaStreak": 0},
+            }
+        with open(self.ledger_path, "r", encoding="utf-8") as f:
+            return json.load(f)
 
-        ledger["version"] = "2.1.0"
+    def _save_ledger_doc(self, ledger: Dict[str, Any]) -> None:
+        _atomic_write_json(Path(self.ledger_path), ledger)
+
+    def _lookup_cluster_meta(self, ledger: Dict[str, Any], cluster_hash: str) -> Dict[str, Any]:
+        for q_item in ledger.get("promotionQueue", []) or []:
+            if isinstance(q_item, dict) and q_item.get("hash") == cluster_hash:
+                return dict(q_item)
+        locs = (ledger.get("clusterIndex", {}) or {}).get(cluster_hash)
+        if not locs:
+            cache_p = self._watermark_cache_path()
+            if cache_p and cache_p.is_file():
+                try:
+                    locs = json.loads(cache_p.read_text(encoding="utf-8")).get("clusterIndex", {}).get(cluster_hash)
+                except Exception:
+                    locs = None
+        if isinstance(locs, list) and locs:
+            first = locs[0]
+            return {
+                "hash": cluster_hash,
+                "suite": first.get("suite", "general_utilities"),
+                "targetSample": first.get("target", ""),
+                "occurrences": len(locs),
+                "isNoise": False,
+                "noiseReason": None,
+            }
+        for dup in ledger.get("topDuplicateClusters", []) or []:
+            if isinstance(dup, dict) and dup.get("hash") == cluster_hash:
+                return {
+                    "hash": cluster_hash,
+                    "suite": dup.get("suite", "general_utilities"),
+                    "targetSample": (dup.get("targets") or [""])[0],
+                    "occurrences": int(dup.get("occurrences", 1)),
+                    "isNoise": False,
+                    "noiseReason": None,
+                }
+        raise KeyError(f"Cluster hash not found in ledger or clusterIndex: {cluster_hash}")
+
+    def stage_cluster(self, cluster_hash: str) -> Dict[str, Any]:
+        if not os.path.exists(self.ledger_path):
+            raise FileNotFoundError(f"Ledger missing: {self.ledger_path}")
+        ledger = self._load_ledger_doc()
+        now = datetime.now(timezone.utc).isoformat()
+        queue: List[Dict[str, Any]] = [dict(x) for x in (ledger.get("promotionQueue") or []) if isinstance(x, dict)]
+        target_item: Optional[Dict[str, Any]] = None
+        for idx, item in enumerate(queue):
+            if item.get("hash") == cluster_hash:
+                target_item = item
+                queue.pop(idx)
+                break
+        if target_item is None:
+            target_item = self._lookup_cluster_meta(ledger, cluster_hash)
+        target_item["state"] = "staged"
+        target_item["disposition"] = "staged"
+        target_item["stagedAt"] = now
+        target_item["updatedAt"] = now
+        queue.insert(0, target_item)
+        ledger["promotionQueue"] = queue
+        ledger.setdefault("loopMeta", {"round": 0, "lastRoundAt": None, "maxRounds": 20, "zeroDeltaStreak": 0})
+        self._save_ledger_doc(ledger)
+        return {"ok": True, "hash": cluster_hash, "state": "staged", "entry": target_item}
+
+    def commit_stage(self, cluster_hash: str, suite: str, target: str) -> Dict[str, Any]:
+        if not os.path.exists(self.ledger_path):
+            raise FileNotFoundError(f"Ledger missing: {self.ledger_path}")
+        ledger = self._load_ledger_doc()
+        now = datetime.now(timezone.utc).isoformat()
+        promoted = ledger.setdefault("promotedHashes", {})
+        promoted[cluster_hash] = {
+            "suite": suite,
+            "target": target,
+            "promotedAt": now,
+            "disposition": "promoted",
+        }
+        dispositions = ledger.setdefault("clusterDispositions", {})
+        dispositions[cluster_hash] = {
+            "disposition": "promoted",
+            "suite": suite,
+            "target": target,
+            "updatedAt": now,
+        }
+        queue: List[Dict[str, Any]] = []
+        found_in_queue = False
+        for item in ledger.get("promotionQueue") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("hash") == cluster_hash:
+                item = dict(item)
+                item["state"] = "promoted"
+                item["disposition"] = "promoted"
+                item["suite"] = suite
+                item["targetSample"] = target
+                item["updatedAt"] = now
+                found_in_queue = True
+            queue.append(item)
+        if not found_in_queue:
+            queue.append({
+                "hash": cluster_hash,
+                "suite": suite,
+                "targetSample": target,
+                "occurrences": 1,
+                "state": "promoted",
+                "disposition": "promoted",
+                "updatedAt": now,
+            })
+        ledger["promotionQueue"] = queue
+        loop_meta = ledger.setdefault("loopMeta", {"round": 0, "lastRoundAt": None, "maxRounds": 20, "zeroDeltaStreak": 0})
+        loop_meta["round"] = int(loop_meta.get("round", 0)) + 1
+        loop_meta["lastRoundAt"] = now
+        loop_meta["zeroDeltaStreak"] = 0
+        drift = ledger.get("driftDetails")
+        if isinstance(drift, dict) and isinstance(drift.get("unpromotedHashes"), list):
+            drift["unpromotedHashes"] = [h for h in drift["unpromotedHashes"] if h != cluster_hash]
+        self._save_ledger_doc(ledger)
+        return {
+            "ok": True,
+            "hash": cluster_hash,
+            "state": "promoted",
+            "round": loop_meta["round"],
+            "suite": suite,
+            "target": target,
+        }
+
+    def triage_cluster(
+        self,
+        cluster_hash: str,
+        disposition: str,
+        suite: Optional[str] = None,
+        target: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        valid_dispositions = ("promoted", "merged_into", "deferred", "ignored_noise")
+        if disposition not in valid_dispositions:
+            raise ValueError(f"Unsupported disposition '{disposition}'; expected one of {valid_dispositions}")
+        if not os.path.exists(self.ledger_path):
+            raise FileNotFoundError(f"Ledger missing: {self.ledger_path}")
+        ledger = self._load_ledger_doc()
+        now = datetime.now(timezone.utc).isoformat()
+        dispositions = ledger.setdefault("clusterDispositions", {})
+        dispositions[cluster_hash] = {
+            "disposition": disposition,
+            "suite": suite,
+            "target": target,
+            "updatedAt": now,
+        }
+        if disposition == "promoted":
+            ledger.setdefault("promotedHashes", {})[cluster_hash] = {
+                "suite": suite or "general_utilities",
+                "target": target or "",
+                "promotedAt": now,
+                "disposition": "promoted",
+            }
+        queue: List[Dict[str, Any]] = []
+        for item in ledger.get("promotionQueue") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("hash") == cluster_hash:
+                item = dict(item)
+                item["state"] = disposition
+                item["disposition"] = disposition
+                if suite:
+                    item["suite"] = suite
+                if target:
+                    item["targetSample"] = target
+                item["updatedAt"] = now
+            queue.append(item)
+        ledger["promotionQueue"] = queue
+        drift = ledger.get("driftDetails")
+        if isinstance(drift, dict) and isinstance(drift.get("unpromotedHashes"), list):
+            drift["unpromotedHashes"] = [h for h in drift["unpromotedHashes"] if h != cluster_hash]
+        self._save_ledger_doc(ledger)
+        return {"ok": True, "hash": cluster_hash, "disposition": disposition}
+
+    def update_ledger(self) -> None:
+        ledger = self._load_ledger_doc()
+        ledger["version"] = "2.2.0"
         ledger.setdefault("summary", {})
+        promoted_hashes = ledger.setdefault("promotedHashes", {})
+        dispositions = ledger.setdefault("clusterDispositions", {})
+        loop_meta = ledger.setdefault("loopMeta", {"round": 0, "lastRoundAt": None, "maxRounds": 20, "zeroDeltaStreak": 0})
+
+        prev_queue = {
+            item["hash"]: item
+            for item in (ledger.get("promotionQueue") or [])
+            if isinstance(item, dict) and item.get("hash")
+        }
+
+        noise_artifacts_count = 0
+        noise_clusters_count = 0
+        actionable_clusters_count = 0
+        next_queue: List[Dict[str, Any]] = []
+        actionable_unpromoted_hashes: List[str] = []
+        actionable_dupes: List[Tuple[str, List[Dict[str, Any]]]] = []
+
+        for c_hash, items in self.duplicate_groups.items():
+            noise_in_cluster = sum(1 for x in items if x.get("isNoise"))
+            noise_artifacts_count += noise_in_cluster
+            cluster_is_noise = bool(items) and all(bool(x.get("isNoise")) for x in items)
+            if cluster_is_noise:
+                noise_clusters_count += 1
+            else:
+                actionable_clusters_count += 1
+                if len(items) > 1:
+                    actionable_dupes.append((c_hash, items))
+
+            disp_meta = dispositions.get(c_hash) if isinstance(dispositions.get(c_hash), dict) else None
+            is_resolved = (c_hash in promoted_hashes) or (
+                disp_meta is not None
+                and disp_meta.get("disposition") in ("promoted", "merged_into", "deferred", "ignored_noise")
+            )
+            if is_resolved:
+                continue
+
+            prev_entry = prev_queue.get(c_hash)
+            is_staged = prev_entry is not None and prev_entry.get("state") == "staged"
+            if not cluster_is_noise:
+                actionable_unpromoted_hashes.append(c_hash)
+            if not is_staged and cluster_is_noise and not self.include_noise:
+                continue
+
+            rep = items[0]
+            entry: Dict[str, Any] = {
+                "hash": c_hash,
+                "suite": rep.get("suite", "general_utilities"),
+                "targetSample": rep.get("target", ""),
+                "occurrences": len(items),
+                "state": "staged" if is_staged else "pending",
+                "disposition": "staged" if is_staged else "pending",
+                "isNoise": cluster_is_noise,
+                "noiseReason": rep.get("noiseReason") if cluster_is_noise else None,
+            }
+            if is_staged and prev_entry and prev_entry.get("stagedAt"):
+                entry["stagedAt"] = prev_entry["stagedAt"]
+            next_queue.append(entry)
+
+        next_queue.sort(key=lambda x: (0 if x.get("state") == "staged" else 1, -int(x.get("occurrences", 0)), str(x.get("suite", "")), str(x.get("hash", ""))))
+        ledger["promotionQueue"] = next_queue[:35]
         ledger["summary"].update({
             "ompSessionsScouted": self.session_stats["omp_sessions"],
             "ompAdvisorsSkipped": self.session_stats["omp_advisors_skipped"],
@@ -1008,6 +1332,11 @@ class SessionHarvester:
             "historyDbRecaps": self.history_summary.get("recaps", 0),
             "harvestedArtifactsCount": len(self.harvested_artifacts),
             "uniqueCodeClusters": len(self.duplicate_groups),
+            "ephemeralNoiseArtifactsCount": noise_artifacts_count,
+            "ephemeralNoiseClustersCount": noise_clusters_count,
+            "actionableClustersCount": actionable_clusters_count,
+            "actionableQueueTotal": len(next_queue),
+            "promotionQueueCount": len(ledger["promotionQueue"]),
             "skippedUnchanged": self.session_stats["skipped_unchanged"],
             "lastHarvestTimestamp": datetime.now(timezone.utc).isoformat(),
         })
@@ -1018,8 +1347,13 @@ class SessionHarvester:
                 k: v for k, v in self.global_diff_report.items() if k != "deltas"
             }
 
-        promoted_hashes = ledger.setdefault("promotedHashes", {})
-        unpromoted_hashes = sorted(set(self.cluster_index.keys()) - set(promoted_hashes.keys()))
+        unpromoted_hashes = sorted(set(actionable_unpromoted_hashes) & set(self.cluster_index.keys()))
+        if not unpromoted_hashes:
+            unpromoted_hashes = sorted(
+                h for h in (set(self.cluster_index.keys()) - set(promoted_hashes.keys()))
+                if not (isinstance(dispositions.get(h), dict) and dispositions[h].get("disposition") in ("promoted", "merged_into", "deferred", "ignored_noise"))
+                and not all(bool(x.get("isNoise")) for x in self.duplicate_groups.get(h, []) if x)
+            )
         unpromoted_delta_dirs = [
             d.get("dir") for d in self.global_diff_report.get("deltas", []) if d.get("missingFromOmpGlobal")
         ]
@@ -1036,13 +1370,13 @@ class SessionHarvester:
             ledger["status"] = "HARVESTED"
         elif not unpromoted_hashes and not unpromoted_delta_dirs:
             ledger.pop("driftDetails", None)
+
+        if not ledger["promotionQueue"] and not unpromoted_delta_dirs:
+            loop_meta["zeroDeltaStreak"] = int(loop_meta.get("zeroDeltaStreak", 0)) + 1
+
         cache_p = self._watermark_cache_path()
         if cache_p is not None:
-            cache_p.parent.mkdir(parents=True, exist_ok=True)
-            cache_p.write_text(
-                json.dumps({"fileWatermarks": self.file_watermarks, "clusterIndex": self.cluster_index}, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            _atomic_write_json(cache_p, {"fileWatermarks": self.file_watermarks, "clusterIndex": self.cluster_index})
             ledger.pop("fileWatermarks", None)
             ledger.pop("clusterIndex", None)
             ledger["cacheLocation"] = "~/.omp/agent/omp-harvester-cache.json"
@@ -1051,6 +1385,7 @@ class SessionHarvester:
         else:
             ledger["fileWatermarks"] = self.file_watermarks
             ledger["clusterIndex"] = self.cluster_index
+
         suite_counts: Dict[str, int] = {}
         for a in self.harvested_artifacts:
             s = a.get("suite", "general_utilities")
@@ -1064,28 +1399,32 @@ class SessionHarvester:
             })
             entry["harvestedCount"] = count
 
+        dupe_source = (
+            [(h, items) for h, items in self.duplicate_groups.items() if len(items) > 1]
+            if self.include_noise
+            else actionable_dupes
+        )
         top_dupes = []
-        for c_hash, items in sorted(self.duplicate_groups.items(), key=lambda x: len(x[1]), reverse=True):
-            if len(items) > 1:
-                top_dupes.append({
-                    "hash": c_hash,
-                    "suite": items[0]["suite"],
-                    "occurrences": len(items),
-                    "targets": [x["target"] for x in items[:5]],
-                })
+        for c_hash, items in sorted(dupe_source, key=lambda x: len(x[1]), reverse=True):
+            top_dupes.append({
+                "hash": c_hash,
+                "suite": items[0]["suite"],
+                "occurrences": len(items),
+                "targets": [x["target"] for x in items[:5]],
+            })
         ledger["topDuplicateClusters"] = top_dupes[:20]
 
-        parent = os.path.dirname(self.ledger_path) or "."
-        os.makedirs(parent, exist_ok=True)
-        with open(self.ledger_path, "w", encoding="utf-8") as f:
-            json.dump(ledger, f, indent=2, ensure_ascii=False)
+        self._save_ledger_doc(ledger)
         print(f"[v] Updated ledger at {self.ledger_path}")
 
     def generate_inventory_report(self, output_path: Optional[str] = None) -> None:
         if output_path is None:
             _, _, output_path = resolve_default_paths()
         suite_groups: Dict[str, List[Dict[str, Any]]] = {}
+        noise_count = 0
         for art in self.harvested_artifacts:
+            if art.get("isNoise"):
+                noise_count += 1
             suite_groups.setdefault(art.get("suite", "general_utilities"), []).append(art)
 
         lines = [
@@ -1095,7 +1434,7 @@ class SessionHarvester:
             f"- **OMP Sessions Scanned:** {self.session_stats['omp_sessions']} ({self.session_stats['omp_top_level']} top, {self.session_stats['omp_subagents']} subagents; {self.session_stats['omp_advisors_skipped']} advisors skipped, {self.session_stats['omp_advisors_included']} advisors included)",
             f"- **Claude Sessions Scanned:** {self.session_stats['claude_sessions']} ({self.session_stats['claude_top_level']} top, {self.session_stats['claude_subagents']} subagents/journals; {self.session_stats['claude_history_entries']} history.jsonl entries)",
             f"- **Incremental Skips (Unchanged Watermarks):** {self.session_stats['skipped_unchanged']}",
-            f"- **Total Candidate Artifacts Indexed:** {len(self.harvested_artifacts)}",
+            f"- **Total Candidate Artifacts Indexed:** {len(self.harvested_artifacts)} (Actionable: {len(self.harvested_artifacts) - noise_count}, Ephemeral Noise Filtered: {noise_count})",
             f"- **Unique Code Hashes:** {len(self.duplicate_groups)}",
             "",
             "## 1. Summary by Target Suite",
@@ -1109,6 +1448,7 @@ class SessionHarvester:
             "email_intelligence_suite": "`config/omp/agent/skills/email-intelligence-suite`",
             "system_maintenance_suite": "`config/omp/agent/skills/system-maintenance-suite`",
             "omp_session_harvester": "`config/omp/agent/skills/omp-session-harvester`",
+            "dev_ops_automation": "Classified dev/ops automation helpers (promotionQueue candidates)",
             "general_utilities": "Triaged (Tier A promoted / Tier B opt-in / Tier C excluded)",
         }
         for s_name, items in sorted(suite_groups.items(), key=lambda x: len(x[1]), reverse=True):
@@ -1116,12 +1456,15 @@ class SessionHarvester:
             lines.append(f"| **`{s_name}`** | {len(items)} | {loc} |")
 
         sorted_clusters = sorted(self.duplicate_groups.items(), key=lambda x: len(x[1]), reverse=True)
-        dup_clusters = [(h, items) for h, items in sorted_clusters if len(items) > 1]
+        dup_clusters = [
+            (h, items) for h, items in sorted_clusters
+            if len(items) > 1 and (self.include_noise or not all(bool(x.get("isNoise")) for x in items))
+        ]
         lines.extend([
             "",
             "## 2. Top Duplicated Code Clusters (Repeated Utilities)",
             "",
-            f"Found **{len(dup_clusters)}** duplicate code clusters across scanned sessions and workspaces:",
+            f"Found **{len(dup_clusters)}** actionable duplicate code clusters across scanned sessions and workspaces:",
             "",
             "| Hash | Occurrences | Suite | Sample Targets / Snippet Preview |",
             "|---|---:|---|---|",
@@ -1163,41 +1506,114 @@ class SessionHarvester:
             "",
         ])
 
-        parent = os.path.dirname(output_path) or "."
-        os.makedirs(parent, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
+        _atomic_write_text(Path(output_path), "\n".join(lines))
         print(f"[v] Generated inventory report at {output_path}")
+
+    def get_round_summary(self) -> Dict[str, Any]:
+        if not os.path.exists(self.ledger_path):
+            return {"status": "NO_LEDGER", "round": 0, "pendingCount": 0, "stagedCount": 0, "stop": True, "stopReason": "no_ledger"}
+        ledger = self._load_ledger_doc()
+        loop_meta = ledger.get("loopMeta", {})
+        round_num = int(loop_meta.get("round", 0))
+        max_rounds = int(loop_meta.get("maxRounds", 20))
+        queue = [x for x in (ledger.get("promotionQueue") or []) if isinstance(x, dict)]
+        staged = [x for x in queue if x.get("state") == "staged"]
+        pending = [x for x in queue if x.get("state") == "pending"]
+        stop_reason = None
+        if not staged and not pending:
+            stop_reason = "actionable_queue_empty"
+        elif round_num >= max_rounds:
+            stop_reason = "max_rounds_reached"
+        return {
+            "status": ledger.get("status", "READY"),
+            "round": round_num,
+            "maxRounds": max_rounds,
+            "stagedCount": len(staged),
+            "pendingCount": len(pending),
+            "stagedBatch": staged[:5],
+            "nextBatch": pending[:5],
+            "promotedCount": len(ledger.get("promotedHashes", {})),
+            "dispositionsCount": len(ledger.get("clusterDispositions", {})),
+            "stop": stop_reason is not None,
+            "stopReason": stop_reason,
+        }
 
     def get_next_unit(self) -> Dict[str, Any]:
         if not os.path.exists(self.ledger_path):
-            return {"status": "NO_LEDGER", "next": "Run --scan to initialize ledger"}
-        with open(self.ledger_path, "r", encoding="utf-8") as f:
-            ledger = json.load(f)
+            return {"type": "none", "status": "NO_LEDGER", "stop": True, "next": "Run --scan to initialize ledger"}
+        ledger = self._load_ledger_doc()
+        loop_meta = ledger.get("loopMeta", {})
+        round_num = int(loop_meta.get("round", 0))
+        max_rounds = int(loop_meta.get("maxRounds", 20))
+        queue = [x for x in (ledger.get("promotionQueue") or []) if isinstance(x, dict)]
+        staged = [x for x in queue if x.get("state") == "staged"]
+        pending = [x for x in queue if x.get("state") == "pending"]
+        drift = ledger.get("driftDetails", {})
+
+        if staged:
+            return {
+                "type": "drift" if ledger.get("status") == "DRIFT_DETECTED" else "staged_resume",
+                "status": ledger.get("status", "HARVESTED"),
+                "round": round_num,
+                "stagedBatch": staged[:5],
+                "batch": staged[:5],
+                "pendingCount": len(pending),
+                "stop": False,
+                "unpromotedHashes": drift.get("unpromotedHashes", []),
+                "unpromotedDeltaDirs": drift.get("unpromotedDeltaDirs", []),
+                "next": "Resume staged cluster verification via pytest/bun test then run --commit-stage",
+            }
+
+        if pending and round_num < max_rounds:
+            return {
+                "type": "drift" if ledger.get("status") == "DRIFT_DETECTED" else "promotion_batch",
+                "status": ledger.get("status", "HARVESTED"),
+                "round": round_num,
+                "stagedBatch": [],
+                "batch": pending[:5],
+                "pendingCount": len(pending),
+                "stop": False,
+                "unpromotedHashes": drift.get("unpromotedHashes", []),
+                "unpromotedDeltaDirs": drift.get("unpromotedDeltaDirs", []),
+                "next": "Run --stage <hash> and --extract <hash>, promote into target skill, test, then --commit-stage",
+            }
+
         if ledger.get("status") == "DRIFT_DETECTED":
-            drift = ledger.get("driftDetails", {})
             return {
                 "type": "drift",
                 "status": "DRIFT_DETECTED",
+                "round": round_num,
+                "stagedBatch": [],
+                "batch": [],
+                "pendingCount": 0,
+                "stop": len(drift.get("unpromotedDeltaDirs", [])) == 0 and len(drift.get("unpromotedHashes", [])) == 0,
                 "unpromotedHashes": drift.get("unpromotedHashes", []),
                 "unpromotedDeltaDirs": drift.get("unpromotedDeltaDirs", []),
-                "next": "Inspect unpromoted clusters via --extract <hash> or promote missing global assets",
+                "next": "Inspect unpromoted clusters via --extract <hash> or triage remaining delta dirs",
             }
+
         for name, meta in ledger.get("suites", {}).items():
             st = meta.get("status", "PENDING")
             if st not in ("PACKAGED", "VERIFIED", "VERIFIED_E2E"):
-                return {"type": "suite", "name": name, "status": st, "targetPath": meta.get("targetPath")}
+                return {"type": "suite", "name": name, "status": st, "targetPath": meta.get("targetPath"), "round": round_num, "stop": False}
         for gap_name, meta in ledger.get("backupParityGaps", {}).items():
             st = meta.get("status", "PENDING")
             if st not in ("VERIFIED", "VERIFIED_E2E", "DONE"):
-                return {"type": "backupGap", "name": gap_name, "status": st}
-        return {"status": ledger.get("status", "READY"), "next": "All tracked units completed"}
+                return {"type": "backupGap", "name": gap_name, "status": st, "round": round_num, "stop": False}
+        return {
+            "type": "complete",
+            "status": ledger.get("status", "READY"),
+            "round": round_num,
+            "pendingCount": 0,
+            "stop": True,
+            "stopReason": "actionable_queue_empty" if round_num < max_rounds else "max_rounds_reached",
+            "next": "All tracked units completed",
+        }
 
     def verify_ledger(self) -> Dict[str, Any]:
         if not os.path.exists(self.ledger_path):
             return {"valid": False, "error": f"Ledger missing: {self.ledger_path}"}
-        with open(self.ledger_path, "r", encoding="utf-8") as f:
-            ledger = json.load(f)
+        ledger = self._load_ledger_doc()
         base_root = find_repo_root() or Path.cwd()
         missing_targets = []
         for name, meta in ledger.get("suites", {}).items():
@@ -1207,7 +1623,6 @@ class SessionHarvester:
                 if not os.path.exists(tp) and not (base_root / tp).exists():
                     missing_targets.append({"suite": name, "targetPath": tp})
         return {"valid": len(missing_targets) == 0, "missingTargets": missing_targets}
-
 
 def run_interactive_menu(harvester: SessionHarvester) -> None:
     while True:
@@ -1261,11 +1676,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--scan", action="store_true", help="Run non-interactive scan & update ledger/report.")
     parser.add_argument("--diff-global", action="store_true", help="Scan project .omp/.claude/.agent dirs against global.")
     parser.add_argument("--next", action="store_true", help="Print next pending loop unit from ledger.")
+    parser.add_argument("--round-summary", action="store_true", help="Print current V4 loop round summary and stop status.")
     parser.add_argument("--verify-ledger", action="store_true", help="Verify claimed packaged paths in ledger.")
     parser.add_argument("--extract", type=str, default=None, help="Extract full original script for cluster hash.")
     parser.add_argument("--out", type=str, default="extracted_clusters", help="Output directory for --extract.")
+    parser.add_argument("--stage", type=str, default=None, help="Mark cluster hash as staged prior to verification.")
+    parser.add_argument("--commit-stage", type=str, default=None, help="Commit staged cluster hash into promotedHashes.")
+    parser.add_argument("--triage", type=str, default=None, help="Record cluster disposition without promoting.")
+    parser.add_argument("--disposition", type=str, choices=["promoted", "merged_into", "deferred", "ignored_noise"], default=None, help="Disposition for --triage.")
+    parser.add_argument("--suite", type=str, default=None, help="Target suite for --commit-stage or --triage.")
+    parser.add_argument("--target", type=str, default=None, help="Target file/skill path for --commit-stage or --triage.")
     parser.add_argument("--full-rescan", action="store_true", help="Ignore fileWatermarks and re-parse all transcripts.")
     parser.add_argument("--include-advisors", action="store_true", help="Include __advisor*.jsonl files in scan.")
+    parser.add_argument("--include-noise", action="store_true", help="Include ephemeral noise clusters in promotionQueue.")
     parser.add_argument("--no-local-config", action="store_true", help="Ignore ~/.omp/harvest-workspaces.local.json.")
     parser.add_argument("--sessions-dir", type=str, default=None, help="Custom OMP sessions directory.")
     parser.add_argument("--claude-projects-dir", type=str, default=None, help="Custom Claude projects directory.")
@@ -1287,11 +1710,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         no_local_config=args.no_local_config,
         full_rescan=args.full_rescan,
         include_advisors=args.include_advisors,
+        include_noise=args.include_noise,
     )
 
     if args.extract:
         res = harvester.extract_cluster(args.extract, args.out)
         print(json.dumps(res, indent=2, ensure_ascii=False))
+        return 0
+    if args.stage:
+        res = harvester.stage_cluster(args.stage)
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+        return 0
+    if args.commit_stage:
+        if not args.suite or not args.target:
+            parser.error("--commit-stage requires --suite and --target")
+        res = harvester.commit_stage(args.commit_stage, args.suite, args.target)
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+        return 0
+    if args.triage:
+        if not args.disposition:
+            parser.error("--triage requires --disposition")
+        res = harvester.triage_cluster(args.triage, args.disposition, suite=args.suite, target=args.target)
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+        return 0
+    if args.round_summary and not args.scan:
+        print(json.dumps(harvester.get_round_summary(), indent=2, ensure_ascii=False))
         return 0
     if args.next and not args.scan:
         print(json.dumps(harvester.get_next_unit(), indent=2, ensure_ascii=False))
@@ -1300,7 +1743,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         res = harvester.verify_ledger()
         print(json.dumps(res, indent=2, ensure_ascii=False))
         return 0 if res.get("valid") else 1
-
     if args.scan or args.diff_global:
         harvester.scan_sessions()
         harvester.scan_workspaces(workspace_paths=args.workspaces)

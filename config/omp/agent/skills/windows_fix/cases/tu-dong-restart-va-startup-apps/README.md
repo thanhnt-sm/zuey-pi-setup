@@ -7,7 +7,7 @@
 - Event 1074 ghi comment: `TB14G5 weekly maintenance restart`
 
 ## Máy ảnh hưởng
-- Lenovo ThinkBook 14 G5 (DESKTOP-MTR8FIH), user: thant
+- Lenovo ThinkBook 14 G5 (`<HOST>`), user: `<username>`
 
 ## Nguyên nhân gốc rễ
 

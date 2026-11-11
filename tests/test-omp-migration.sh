@@ -404,4 +404,52 @@ if [ -e "$CLEAN_TARGET/agent/APPEND_SYSTEM.md" ] || grep -q '"pi-footer"' "$CLEA
 fi
 echo "✓ PASS: --no-upstream restores the snapshot only."
 
+echo "=== [TDD] Phase 4: mcp.json.example sanitization & absent-only restore ==="
+MCP_BAK_SRC="$TEST_TMP/mcp_bak_src"
+cp -r "$MOCK_OMP" "$MCP_BAK_SRC"
+cat <<'EOF' > "$MCP_BAK_SRC/agent/mcp.json"
+{
+  "mcpServers": {
+    "typesafe": {
+      "type": "stdio",
+      "command": "C:\\Users\\alice\\.claude\\runtime\\node\\node.exe",
+      "args": ["C:\\Users\\alice\\.claude\\mcp\\typesafe\\typesafe-mcp-server.cjs"]
+    }
+  }
+}
+EOF
+MCP_OUT_DIR="$TEST_TMP/mcp_cfg_out"
+MCP_TAR="$TEST_TMP/mcp-portable.tar.gz"
+HOME="$TEST_TMP/fake_alice" USERPROFILE="C:/Users/alice" run_backup --source "$MCP_BAK_SRC" --config-dir "$MCP_OUT_DIR" -o "$MCP_TAR" --no-upstream >/dev/null
+if [ -e "$MCP_OUT_DIR/agent/mcp.json" ]; then
+    echo "FAIL: raw live mcp.json must not be copied into config_dir!"
+    exit 1
+fi
+if [ ! -f "$MCP_OUT_DIR/agent/mcp.json.example" ]; then
+    echo "FAIL: mcp.json.example was not generated from mcp.json!"
+    exit 1
+fi
+if grep -qi "alice" "$MCP_OUT_DIR/agent/mcp.json.example"; then
+    echo "FAIL: mcp.json.example leaked raw username path!"
+    exit 1
+fi
+grep -q "{{OMP_NODE}}" "$MCP_OUT_DIR/agent/mcp.json.example" || { echo "FAIL: mcp.json.example missing {{OMP_NODE}}"; exit 1; }
+grep -q "{{USER_HOME}}" "$MCP_OUT_DIR/agent/mcp.json.example" || { echo "FAIL: mcp.json.example missing {{USER_HOME}}"; exit 1; }
+
+# Absent-only initialization on restore (preserves pre-existing mcp.json)
+MCP_TGT_NEW="$TEST_TMP/mcp_tgt_new"
+OS_OVERRIDE="Darwin" HOME="$TEST_TMP/mac_home" run_restore --source-tar "$MCP_TAR" --target-dir "$MCP_TGT_NEW" --no-install --no-upstream >/dev/null
+test -f "$MCP_TGT_NEW/agent/mcp.json" || { echo "FAIL: restore did not seed absent mcp.json from mcp.json.example"; exit 1; }
+if grep -qE '\{\{OMP_NODE\}\}|\{\{USER_HOME\}\}' "$MCP_TGT_NEW/agent/mcp.json"; then
+    echo "FAIL: unexpanded placeholders remained in restored mcp.json"
+    exit 1
+fi
+
+MCP_TGT_KEEP="$TEST_TMP/mcp_tgt_keep"
+mkdir -p "$MCP_TGT_KEEP/agent"
+echo '{"mcpServers":{"custom":{"command":"my-custom-mcp"}}}' > "$MCP_TGT_KEEP/agent/mcp.json"
+OS_OVERRIDE="Darwin" HOME="$TEST_TMP/mac_home" run_restore --source-tar "$MCP_TAR" --target-dir "$MCP_TGT_KEEP" --no-install --no-upstream >/dev/null
+grep -q "my-custom-mcp" "$MCP_TGT_KEEP/agent/mcp.json" || { echo "FAIL: restore overwrote existing user mcp.json"; exit 1; }
+echo "✓ PASS: mcp.json.example templatized safely and seeded only when absent."
+
 echo "=== ALL TDD TESTS PASSED ==="

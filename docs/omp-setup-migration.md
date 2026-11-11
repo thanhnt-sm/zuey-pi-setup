@@ -18,15 +18,15 @@ zuey-pi-setup/
 │   │   │   ├── models.yml              # apiKey literal → !printenv <PROVIDER>_API_KEY (mỗi provider 1 biến)
 │   │   │   ├── .env.example            # Tên biến môi trường (không có giá trị)
 │   │   │   ├── commandcode-models.json
-│   │   │   ├── extensions/             # Extension tự viết; shim deref đệ quy + omp-toolkit-hub.ts (/harvest-loop)
-│   │   │   ├── skills/                 # OMP-native Priority-100 skills (4 domain suites + standalone omp-session-harvester + Tier A)
+│   │   │   ├── mcp.json.example        # Template MCP portable ({{OMP_NODE}}, {{USER_HOME}}, chỉ seed khi mcp.json chưa có)
+│   │   │   ├── extensions/             # Extension tự viết; shim deref đệ quy + omp-toolkit-hub.ts (5 native omp_* tools + /omp-doctor)
+│   │   │   ├── skills/                 # OMP-native Priority-100 skills (4 domain suites + CleanPC v2.6 + omp-session-harvester + Tier A)
 │   │   │   ├── skills-optin/           # Tier B opt-in skills (hide: true, không làm phình prompt)
 │   │   │   ├── agents/                 # Agents (advisor, ck-advisor, pmo-*, hlk-*, + 18 core Claude agents ported sang OMP)
 │   │   │   ├── commands/               # Slash commands (pmo-delivery, pm-email, hlk-*, ck-council/parallel/red-team/scout-fanout)
 │   │   │   ├── rules/                  # Rules (team-coordination-rules, pm-ba-workflow, pm-ba-prewrite-guards, + 6 core Claude rules)
 │   │   │   ├── tools-requirements.txt  # Python dependencies cho ~/.omp/tools-venv (openpyxl, python-docx, defusedxml, extract-msg, markdown, pypdf)
 │   │   │   └── managed-skills/         # Autolearn skills
-│   │   └── plugins/
 │   │       ├── package.json            # Plugin đang cài trên máy thật (không ship bun.lock chéo OS)
 │   │       └── omp-plugins.lock.json   # Registry trạng thái plugin của OMP (tự reconcile khi merge upstream)
 │   └── omp-upstream/                   # Overlay port từ upstream zuey-pi (omp-sync-upstream.sh sở hữu)
@@ -37,20 +37,22 @@ zuey-pi-setup/
 │       └── plugins/package.json        # Plugin bổ sung từ upstream (pi-footer, pi-smart-fetch, computer-use,...)
 ├── scripts/
 │   ├── omp-sync-upstream.sh        # Script đồng bộ an toàn từ upstream (zero-merge, pinned versions)
-│   ├── omp-setup-backup.sh         # Snapshot máy thật → config/omp + tarball (kèm overlay ở upstream/)
-│   ├── omp-setup-restore.sh        # Restore đa nền tảng: snapshot + overlay (chỉ thêm file còn thiếu)
-│   ├── omp-private-backup.sh       # Backup mã hóa (gpg) memory/history/TypeSafe/sessions RA NGOÀI repo
-│   ├── omp-private-restore.sh      # Khôi phục archive GPG (chống treo M1 + dò nvm/fnm/volta/mise node)
-│   ├── omp-link-local.py           # Linker opt-in nối shared_mirror local về global ~/.omp/agent/ (giữ nguyên override)
+│   ├── omp-setup-backup.sh         # Snapshot máy thật → config/omp + tarball (kèm overlay ở upstream/ + mcp.json.example)
+│   ├── omp-setup-restore.sh        # Restore đa nền tảng: snapshot + overlay + seed mcp.json khi thiếu
+│   ├── omp-private-backup.sh       # Backup mã hóa (gpg) memory/history/TypeSafe/sessions + mcp.json RA NGOÀI repo
+│   ├── omp-private-restore.sh      # Khôi phục archive GPG (chống treo M1 + dò nvm/fnm/volta/mise node + rehydrate mcp.json)
+│   ├── omp-link-local.py           # Linker opt-in nối shared_mirror local về global ~/.omp/agent/ (Project -> Global, hardlink/junction)
+│   ├── omp-bootstrap.sh            # Entrypoint 1 lệnh đa nền tảng (--mode restore|backup|doctor)
+│   ├── omp-bootstrap.ps1           # Wrapper PowerShell Windows (chọn Git Bash, chặn WSL System32\bash.exe)
+│   ├── omp-doctor.py               # Chẩn đoán cross-OS (tools-venv, plugins, mcp.json, local links, WAL, leak)
 │   ├── pi-setup-backup.sh          # Script backup gốc của pi
 │   └── pi-setup-restore.sh         # Script restore gốc của pi
 ├── tests/
 │   ├── test-omp-syncignore.sh      # TDD test kiểm tra lọc plugin & giữ nguyên version pinned
 │   ├── test-omp-sync-extraction.sh # TDD test kiểm tra cô lập git show (không gây bẩn git HEAD)
-│   ├── test-omp-migration.sh       # Bộ kiểm thử TDD xác minh backup/restore, ABS_LEFT & lockfile
-│   ├── test-omp-local-linker.sh    # TDD test phân loại override/shared_mirror & junction an toàn
-│   └── test-omp-toolkit-hub.test.ts # Bun test cho extension omp-toolkit-hub.ts (/harvest-loop, session_compact)
-└── backups/
+│   ├── test-omp-migration.sh       # Bộ kiểm thử TDD xác minh backup/restore, mcp.json.example, ABS_LEFT & lockfile
+│   ├── test-omp-local-linker.sh    # TDD test phân loại override/shared_mirror, hardlink & direction guard
+│   └── test-omp-toolkit-hub.test.ts # Bun test cho extension omp-toolkit-hub.ts (5 native tools, /harvest-loop, /omp-doctor)
     ├── omp-setup-portable.tar.gz       # Bundle sạch của omp: snapshot ở gốc, overlay ở upstream/
     └── pi-setup-portable.tar.gz        # Bundle nén gốc của pi
 ```
@@ -209,11 +211,13 @@ Nếu restore thủ công hoặc gặp hiện tượng GPG treo không hiện h�
 
 Đường dẫn trong archive tương đối với `$HOME` (`.omp/agent/memories/...`, `.omp/agent/history.db`, `.claude/mcp/typesafe/...`).
 
-### Bước 7: Khởi động Oh-My-Pi
+### Bước 7: Kiểm tra sức khỏe & Khởi động Oh-My-Pi
 ```bash
+# Có thể chạy gộp Bước 3–6 qua 1 lệnh duy nhất:
+# ./scripts/omp-bootstrap.sh --mode restore --private-archive ~/omp-private-backups/omp-private-<ts>.tar.gz.gpg --link-mirrors
+python3 scripts/omp-doctor.py --strict --json
 omp
 ```
-
 ---
 
 ## 5. Kiểm thử TDD (Automated Tests)

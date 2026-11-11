@@ -331,5 +331,101 @@ d = json.load(open('$WIN_TMP/p2-ledger.json', encoding='utf-8'))
 assert d['status'] == 'DRIFT_DETECTED', f'Expected DRIFT_DETECTED, got {d[\"status\"]}'
 "
 python "$ROOT/scripts/omp-session-harvester.py" --next --no-local-config --ledger "$WIN_TMP/p2-ledger.json" | grep -q "DRIFT_DETECTED"
+# Phase 1 V4 TDD Assertions: Noise Filter, dev_ops_automation, Two-Phase Stage/Commit, Triage Dispositions & Stop Condition
+echo "[*] Testing Phase 1 V4 noise filter, promotionQueue, --include-noise, --stage/--commit-stage & --triage..."
+P4_SESS="$TMP_DIR/p4_sessions/ws"
+P4_LEDGER="$TMP_DIR/p4-ledger.json"
+P4_NOISE_LEDGER="$TMP_DIR/p4-noise-ledger.json"
+P4_REPORT="$TMP_DIR/p4-report.md"
+P4_CFG="$TMP_DIR/p4-cfg.json"
+mkdir -p "$P4_SESS" "$TMP_DIR/p4_work"
+cat << EOF > "$P4_CFG"
+{
+  "scanRoots": ["$WIN_TMP/p4_work"],
+  "additionalWorkspaces": [],
+  "excludeDirNames": [".git", "node_modules"],
+  "tierCExcludeGlobs": []
+}
+EOF
+cat << 'EOF' > "$P4_SESS/v4_mix.jsonl"
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"edit","arguments":{"path":"scripts/patch_target.py","newText":"def patched_helper_only_edit(items):\n    # edit hunk should be filtered from promotionQueue\n    return [x for x in items if x]\n"}}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"write","arguments":{"path":"tests/widget.test.ts","content":"import { expect, test } from 'bun:test';\ntest('widget renders cleanly', () => {\n  expect(1 + 1).toBe(2);\n});\n"}}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"write","arguments":{"path":"tmp/scratchpad/one_off_run.py","content":"def scratch_tmp_check():\n    # scratchpad temporary check script over length limit\n    return {'scratch': True, 'ok': 1}\n"}}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"eval","arguments":{"language":"py","code":"import unittest\nclass QuickTest(unittest.TestCase):\n    def test_one(self):\n        self.assertEqual(2, 1 + 1)\nunittest.main()\n"}}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"write","arguments":{"path":"scripts/svn_migrator.py","content":"import subprocess\ndef sync_svn_runtime_branch(repo_dir):\n    # real standalone dev_ops_automation utility script\n    return subprocess.check_output(['svn', 'status', repo_dir], text=True)\n"}}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"eval","arguments":{"language":"py","code":"import sqlite3\ndef inspect_db_schema_map(db_path):\n    conn = sqlite3.connect(db_path)\n    rows = conn.execute(\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall()\n    conn.close()\n    return [r[0] for r in rows]\n"}}]}}
+EOF
 
-echo "[v] PASS: test-omp-session-harvester.sh V2+V3 (incl. Phase 2 incremental loop) passed all assertions."
+# 1) Default scan excludes ephemeral noise from promotionQueue while retaining clusterIndex
+python "$ROOT/scripts/omp-session-harvester.py" --scan --diff-global --no-local-config \
+  --sessions-dir "$WIN_TMP/p4_sessions" --claude-projects-dir "" --history-db "" \
+  --config "$P4_CFG" --ledger "$P4_LEDGER" --report "$P4_REPORT" >/dev/null
+
+read -r SVN_HASH DB_HASH <<EOF
+$(python -c "
+import json
+d = json.load(open('$WIN_TMP/p4-ledger.json', encoding='utf-8'))
+s = d['summary']
+assert s.get('ephemeralNoiseArtifactsCount', 0) >= 4, f'Expected >=4 noise artifacts, got {s}'
+assert len(d.get('clusterIndex', {})) == 6, f'clusterIndex must retain all 6 clusters for audit: {len(d.get(\"clusterIndex\", {}))}'
+pq = d.get('promotionQueue', [])
+targets = ' '.join(item.get('targetSample', '') for item in pq)
+assert 'svn_migrator.py' in targets, f'Missing standalone svn_migrator.py in promotionQueue: {pq}'
+assert 'eval_py_' in targets, f'Missing multi-line eval db utility in promotionQueue: {pq}'
+for noise_tok in ('#edit', 'widget.test.ts', 'scratchpad', 'QuickTest'):
+    assert noise_tok not in targets, f'Noise item leaked into default promotionQueue: {noise_tok} -> {pq}'
+svn_h = next(i['hash'] for i in pq if 'svn_migrator.py' in i['targetSample'])
+db_h = next(i['hash'] for i in pq if 'eval_py_' in i['targetSample'])
+assert any(i.get('suite') == 'dev_ops_automation' for i in pq if i['hash'] == svn_h), pq
+print(svn_h, db_h)
+")
+EOF
+
+# 2) --include-noise restores noise entries into promotionQueue
+python "$ROOT/scripts/omp-session-harvester.py" --scan --include-noise --full-rescan --no-local-config \
+  --sessions-dir "$WIN_TMP/p4_sessions" --claude-projects-dir "" --history-db "" \
+  --config "$P4_CFG" --ledger "$P4_NOISE_LEDGER" --report "$P4_REPORT" >/dev/null
+python -c "
+import json
+d = json.load(open('$WIN_TMP/p4-noise-ledger.json', encoding='utf-8'))
+pq = d.get('promotionQueue', [])
+assert len(pq) == 6, f'Expected all 6 clusters with --include-noise, got {len(pq)}: {pq}'
+assert any(i.get('isNoise') is True for i in pq), pq
+"
+
+# 3) --stage surfaces staged item in --next; --commit-stage records promotedHashes & advances loopMeta.round
+python "$ROOT/scripts/omp-session-harvester.py" --stage "$SVN_HASH" --no-local-config --ledger "$P4_LEDGER" >/dev/null
+python "$ROOT/scripts/omp-session-harvester.py" --next --no-local-config --ledger "$P4_LEDGER" | python -c "
+import json, sys
+nxt = json.load(sys.stdin)
+staged = nxt.get('stagedBatch', [])
+assert any(x.get('hash') == '$SVN_HASH' and x.get('state') == 'staged' for x in staged), nxt
+"
+python "$ROOT/scripts/omp-session-harvester.py" --commit-stage "$SVN_HASH" --suite dev_ops_automation \
+  --target config/omp/agent/skills/dev-ops-automation --no-local-config --ledger "$P4_LEDGER" >/dev/null
+python -c "
+import json
+d = json.load(open('$WIN_TMP/p4-ledger.json', encoding='utf-8'))
+assert '$SVN_HASH' in d.get('promotedHashes', {}), d.get('promotedHashes')
+assert d.get('loopMeta', {}).get('round', 0) >= 1, d.get('loopMeta')
+"
+
+# 4) --triage ignored_noise persists across repeated --scan --diff-global runs, then --next signals stop
+python "$ROOT/scripts/omp-session-harvester.py" --triage "$DB_HASH" --disposition ignored_noise --no-local-config --ledger "$P4_LEDGER" >/dev/null
+python "$ROOT/scripts/omp-session-harvester.py" --scan --diff-global --no-local-config \
+  --sessions-dir "$WIN_TMP/p4_sessions" --claude-projects-dir "" --history-db "" \
+  --config "$P4_CFG" --ledger "$P4_LEDGER" --report "$P4_REPORT" >/dev/null
+python -c "
+import json
+d = json.load(open('$WIN_TMP/p4-ledger.json', encoding='utf-8'))
+assert d.get('clusterDispositions', {}).get('$DB_HASH', {}).get('disposition') == 'ignored_noise', d.get('clusterDispositions')
+assert not any(i.get('state') in ('pending', 'staged') for i in d.get('promotionQueue', [])), d.get('promotionQueue')
+"
+python "$ROOT/scripts/omp-session-harvester.py" --round-summary --no-local-config --ledger "$P4_LEDGER" | python -c "
+import json, sys
+rs = json.load(sys.stdin)
+assert rs.get('stop') is True and rs.get('pendingCount') == 0, rs
+"
+
+
+echo "[v] PASS: test-omp-session-harvester.sh V2+V3+V4 (incl. Phase 1 noise filter & queue loop) passed all assertions."

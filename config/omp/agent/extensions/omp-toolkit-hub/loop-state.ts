@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { resolveEffectiveHome, resolveToolsPython } from "./python-bridge";
 
 export interface LoopCheckpoint {
   updatedAt: string;
@@ -15,10 +15,11 @@ export interface ToolkitHubOptions {
   ledgerPath?: string;
   checkpointPath?: string;
   harvesterScript?: string;
+  doctorScript?: string;
 }
 
 export function resolveHomeDir(opts?: ToolkitHubOptions): string {
-  return opts?.homeDir || process.env.HOME || process.env.USERPROFILE || os.homedir();
+  return resolveEffectiveHome(opts?.homeDir);
 }
 
 export function resolveLedgerPath(opts?: ToolkitHubOptions, cwd?: string): string {
@@ -47,12 +48,23 @@ export function resolveHarvesterScript(opts?: ToolkitHubOptions, cwd?: string): 
   return null;
 }
 
+export function resolveDoctorScript(opts?: ToolkitHubOptions, cwd?: string): string | null {
+  if (opts?.doctorScript && existsSync(opts.doctorScript)) return opts.doctorScript;
+  const home = resolveHomeDir(opts);
+  const candidates = [
+    path.join(cwd || process.cwd(), "scripts", "omp-doctor.py"),
+    path.join(home, ".omp", "agent", "tools", "omp-doctor.py"),
+    path.join(home, ".omp", "agent", "skills", "omp-session-harvester", "scripts", "omp_doctor.py"),
+  ];
+  for (const cand of candidates) {
+    if (existsSync(cand)) return cand;
+  }
+  return null;
+}
+
 export function resolvePythonBin(homeDir: string): string {
-  const venvWin = path.join(homeDir, ".omp", "tools-venv", "Scripts", "python.exe");
-  if (existsSync(venvWin)) return venvWin;
-  const venvPosix = path.join(homeDir, ".omp", "tools-venv", "bin", "python");
-  if (existsSync(venvPosix)) return venvPosix;
-  return process.platform === "win32" ? "python" : "python3";
+  const res = resolveToolsPython(homeDir);
+  return res.ok ? res.pythonBin : (process.platform === "win32" ? "python" : "python3");
 }
 
 export function readLedgerSummary(ledgerPath: string): Record<string, unknown> {
@@ -62,9 +74,17 @@ export function readLedgerSummary(ledgerPath: string): Record<string, unknown> {
   try {
     const raw = JSON.parse(readFileSync(ledgerPath, "utf8")) as Record<string, unknown>;
     const suites = (raw.suites && typeof raw.suites === "object" ? raw.suites : {}) as Record<string, Record<string, unknown>>;
+    const queue = Array.isArray(raw.promotionQueue) ? (raw.promotionQueue as Array<Record<string, unknown>>) : [];
+    const staged = queue.filter((x) => x?.state === "staged");
+    const pending = queue.filter((x) => x?.state === "pending");
+    const loopMeta = (raw.loopMeta && typeof raw.loopMeta === "object" ? raw.loopMeta : {}) as Record<string, unknown>;
     let nextUnit: Record<string, unknown> | null = null;
-    if (raw.status === "DRIFT_DETECTED") {
-      nextUnit = { type: "drift", status: "DRIFT_DETECTED", details: raw.driftDetails ?? {} };
+    if (staged.length > 0) {
+      nextUnit = { type: "staged_resume", status: raw.status, round: loopMeta.round ?? 0, stagedCount: staged.length, stagedBatch: staged.slice(0, 5) };
+    } else if (raw.status === "DRIFT_DETECTED") {
+      nextUnit = { type: "drift", status: "DRIFT_DETECTED", round: loopMeta.round ?? 0, pendingCount: pending.length, details: raw.driftDetails ?? {} };
+    } else if (pending.length > 0) {
+      nextUnit = { type: "promotion_batch", status: raw.status, round: loopMeta.round ?? 0, pendingCount: pending.length, batch: pending.slice(0, 5) };
     } else {
       for (const [name, meta] of Object.entries(suites)) {
         const st = String(meta?.status ?? "PENDING");
@@ -77,6 +97,9 @@ export function readLedgerSummary(ledgerPath: string): Record<string, unknown> {
     return {
       status: String(raw.status ?? "UNKNOWN"),
       ledgerPath,
+      round: Number(loopMeta.round ?? 0),
+      stagedCount: staged.length,
+      pendingCount: pending.length,
       summary: (raw.summary as Record<string, unknown>) ?? {},
       nextUnit,
     };
@@ -104,32 +127,29 @@ export function writeLoopCheckpoint(checkpointPath: string, data: LoopCheckpoint
   }
 }
 
-export function runHarvesterCli(args: string[], opts?: ToolkitHubOptions, cwd?: string): { ok: boolean; stdout: string; stderr: string; exitCode: number } {
-  const script = resolveHarvesterScript(opts, cwd);
-  if (!script) {
-    return { ok: false, stdout: "", stderr: "harvester script not found", exitCode: 127 };
-  }
+function execPythonScript(script: string | null, missingErr: string, args: string[], opts?: ToolkitHubOptions, cwd?: string) {
+  if (!script) return { ok: false, stdout: "", stderr: missingErr, exitCode: 127 };
   const py = resolvePythonBin(resolveHomeDir(opts));
   try {
     const res = spawnSync(py, [script, ...args], {
       cwd: cwd || process.cwd(),
       encoding: "utf8",
+      shell: false,
       windowsHide: true,
       timeout: 60_000,
+      env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
     });
     const code = typeof res.status === "number" ? res.status : 1;
-    return {
-      ok: code === 0,
-      stdout: (res.stdout || "").trim(),
-      stderr: (res.stderr || "").trim(),
-      exitCode: code,
-    };
+    return { ok: code === 0, stdout: (res.stdout || "").trim(), stderr: (res.stderr || "").trim(), exitCode: code };
   } catch (err) {
-    return {
-      ok: false,
-      stdout: "",
-      stderr: err instanceof Error ? err.message : String(err),
-      exitCode: 1,
-    };
+    return { ok: false, stdout: "", stderr: err instanceof Error ? err.message : String(err), exitCode: 1 };
   }
+}
+
+export function runHarvesterCli(args: string[], opts?: ToolkitHubOptions, cwd?: string) {
+  return execPythonScript(resolveHarvesterScript(opts, cwd), "harvester script not found", args, opts, cwd);
+}
+
+export function runDoctorCli(args: string[], opts?: ToolkitHubOptions, cwd?: string) {
+  return execPythonScript(resolveDoctorScript(opts, cwd), "omp-doctor script not found", args, opts, cwd);
 }
