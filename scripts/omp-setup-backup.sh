@@ -12,6 +12,9 @@
 #   config/omp-upstream/  upstream-ported overlay (owned by omp-sync-upstream.sh; NEVER written here)
 # The tarball carries both: the snapshot at its root and the overlay under upstream/.
 #
+# Extension loader shims (`export { default } from "<abs path>";`) are dereferenced for portability and
+# listed in extension-loader-shims.tsv so omp-setup-restore.sh keeps/recreates the 1-line loader instead.
+#
 # Private state (mnemopi memory, history, ~/.claude) is NOT handled here:
 # use scripts/omp-private-backup.sh, which writes an encrypted archive outside the repo.
 #
@@ -373,7 +376,28 @@ while (queue.length) {
 		done
 		rm -f "$visited_file" "$queue_file"
 	fi
+	record_loader_shim "$name" "${shim##*.}" "$target"
 	rm -f "$shim"
+}
+
+# Mark a dereferenced shim in $STAGE_DIR/extension-loader-shims.tsv (name, loader extension,
+# target as {{USER_HOME}}-relative template or "-" when outside $HOME). Restore uses it to keep or
+# recreate the 1-line loader instead of installing a second, dereferenced copy next to it.
+SHIM_MANIFEST="$STAGE_DIR/extension-loader-shims.tsv"
+record_loader_shim() {
+	local name="$1" loader_ext="$2" target="$3" home_norm target_norm tmpl="-" lc_home lc_target
+	home_norm="$(norm_path "${HOME:-${USERPROFILE:-}}")"
+	home_norm="${home_norm%/}"
+	target_norm="$(norm_path "$target")"
+	if [ -n "$home_norm" ]; then
+		lc_home="$(printf '%s' "$home_norm/" | tr '[:upper:]' '[:lower:]')"
+		lc_target="$(printf '%s' "$target_norm" | tr '[:upper:]' '[:lower:]')"
+		case "$lc_target" in
+			"$lc_home"*) tmpl="{{USER_HOME}}/${target_norm:$((${#home_norm} + 1))}" ;;
+		esac
+	fi
+	printf '%s	%s	%s
+' "$name" "$loader_ext" "$tmpl" >> "$SHIM_MANIFEST"
 }
 
 if [ -d "$OMP_SRC/agent/extensions" ]; then

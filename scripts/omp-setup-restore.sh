@@ -203,6 +203,62 @@ if [ -f "$STAGE_DIR/agent/config.yml" ]; then
 	mv "$STAGE_DIR/agent/config.yml.tmp" "$STAGE_DIR/agent/config.yml"
 fi
 
+# 3b. Reconcile dereferenced extension snapshots with machine-local loader shims.
+# A 1-line `export { default } from "<abs path>";` loader belongs to the machine that owns the
+# target (e.g. typesafe-planner.ts -> ~/Projects/omp_extension, managed by omp_extension's sync).
+# Installing the dereferenced extensions/<name>/ package next to it would load the extension twice,
+# so: keep an existing loader untouched; else recreate it from the backup manifest when its target
+# exists here; else fall back to the dereferenced package (portable copy) with a warning.
+ABS_IMPORT_RE="(from|import|require\()[[:space:]]*[\"'](([A-Za-z]:[/\\])|/)[^\"']+[\"']"
+is_loader_shim() {
+	[ -f "$1" ] || return 1
+	grep -qE "$ABS_IMPORT_RE" "$1" || return 1
+	[ "$(grep -vE "^[[:space:]]*(//.*)?$" "$1" | grep -cvE "$ABS_IMPORT_RE" || true)" -eq 0 ]
+}
+loader_shim_target() {
+	grep -oE "$ABS_IMPORT_RE" "$1" | head -n 1 | sed -E "s/^[^\"']*[\"']//; s/[\"']\$//"
+}
+reconcile_loader_shims() {
+	local stage_ext="$STAGE_DIR/agent/extensions" ext_root="$TARGET_DIR/agent/extensions"
+	local manifest="$STAGE_DIR/extension-loader-shims.tsv" home_nat entry name loader_ext tmpl target local_loader ext
+	[ -d "$stage_ext" ] || return 0
+	home_nat="$(native_path "${HOME:-${USERPROFILE:-}}")"
+	home_nat="${home_nat%/}"
+	for entry in "$stage_ext"/*/; do
+		[ -d "$entry" ] || continue
+		name="$(basename "$entry")"
+		local_loader=""
+		for ext in ts js; do
+			if is_loader_shim "$ext_root/$name.$ext"; then local_loader="$ext_root/$name.$ext"; break; fi
+		done
+		if [ -n "$local_loader" ]; then
+			target="$(loader_shim_target "$local_loader")"
+			echo "-> Keeping existing loader $(basename "$local_loader") (not installing dereferenced $name/)"
+			[ -f "$target" ] || echo "Warning: loader $(basename "$local_loader") points at missing $target" >&2
+			rm -rf "$entry"
+			continue
+		fi
+		[ -f "$manifest" ] || continue
+		loader_ext=""
+		tmpl=""
+		IFS=$'	' read -r _n loader_ext tmpl < <(awk -F'	' -v n="$name" '$1 == n { print; exit }' "$manifest") || true
+		[ -n "${loader_ext:-}" ] || continue
+		target=""
+		case "${tmpl:-}" in
+			"{{USER_HOME}}/"*) [ -n "$home_nat" ] && target="$home_nat/${tmpl#"{{USER_HOME}}/"}" ;;
+		esac
+		if [ -n "$target" ] && [ -f "$target" ]; then
+			printf 'export { default } from "%s";
+' "$target" > "$stage_ext/$name.$loader_ext"
+			echo "-> Recreating loader $name.$loader_ext -> $target (not installing dereferenced $name/)"
+			rm -rf "$entry"
+		else
+			echo "Warning: loader target for $name not found on this machine; installing the dereferenced snapshot $name/." >&2
+		fi
+	done
+}
+reconcile_loader_shims
+
 # 4. Back up every target path the snapshot will overwrite
 TIMESTAMP="$(date +%Y%m%d%H%M%S)"
 RESTORE_BACKUP_DIR="$TARGET_DIR/restore-backups/$TIMESTAMP"

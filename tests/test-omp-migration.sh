@@ -369,13 +369,14 @@ if ! grep -q 'live: true' "$MOCK_RESTORE_TARGET/agent/extensions/typesafe-planne
 fi
 echo "✓ PASS: overwritten files saved to restore-backups/; snapshot wins over overlay."
 
-if [ -e "$MOCK_RESTORE_TARGET/agent/extensions/shimmed.ts" ] \
-    || [ ! -f "$MOCK_RESTORE_TARGET/agent/extensions/shimmed/index.ts" ] \
-    || ! grep -q 'local-only' "$BAK_DIR/agent/extensions/shimmed.ts"; then
-    echo "FAIL: same-named single-file extension not replaced by snapshot directory (or not backed up)."
+# An existing machine-local loader shim is never deleted or overwritten, and the dereferenced
+# snapshot dir is not installed next to it (two copies would both load).
+if ! grep -q 'local-only' "$MOCK_RESTORE_TARGET/agent/extensions/shimmed.ts" \
+    || [ -e "$MOCK_RESTORE_TARGET/agent/extensions/shimmed" ]; then
+    echo "FAIL: existing loader shim was replaced by the dereferenced snapshot directory."
     exit 1
 fi
-echo "✓ PASS: directory extension replaces same-named shim file, shim saved to restore-backups/."
+echo "✓ PASS: existing loader shim kept; dereferenced snapshot dir not installed beside it."
 
 if ! grep -q '# local append' "$MOCK_RESTORE_TARGET/agent/APPEND_SYSTEM.md"; then
     echo "FAIL: overlay overwrote an existing APPEND_SYSTEM.md."
@@ -451,5 +452,83 @@ echo '{"mcpServers":{"custom":{"command":"my-custom-mcp"}}}' > "$MCP_TGT_KEEP/ag
 OS_OVERRIDE="Darwin" HOME="$TEST_TMP/mac_home" run_restore --source-tar "$MCP_TAR" --target-dir "$MCP_TGT_KEEP" --no-install --no-upstream >/dev/null
 grep -q "my-custom-mcp" "$MCP_TGT_KEEP/agent/mcp.json" || { echo "FAIL: restore overwrote existing user mcp.json"; exit 1; }
 echo "✓ PASS: mcp.json.example templatized safely and seeded only when absent."
+
+echo "=== [TDD] Loader topology: typesafe-planner loader shim vs dereferenced snapshot ==="
+LT_HOME="$TEST_TMP/loader_home"
+LT_DEV="$LT_HOME/Projects/omp_extension"
+mkdir -p "$LT_DEV/src" "$LT_HOME/.omp/agent/extensions"
+printf 'import { x } from "./src/x";\nexport default { dev: x };\n' > "$LT_DEV/typesafe-planner.ts"
+echo 'export const x = 1;' > "$LT_DEV/src/x.ts"
+echo 'dev-ignore-sentinel' > "$LT_DEV/.gitignore"
+LT_HOME_NAT="$LT_HOME"
+command -v cygpath >/dev/null 2>&1 && LT_HOME_NAT="$(cygpath -m "$LT_HOME")"
+LT_LOADER="export { default } from \"$LT_HOME_NAT/Projects/omp_extension/typesafe-planner.ts\";"
+printf '%s\n' "$LT_LOADER" > "$LT_HOME/.omp/agent/extensions/typesafe-planner.ts"
+dev_sum() { (cd "$LT_DEV" && find . -type f | sort | xargs cat | cksum; find . | sort | cksum); }
+LT_DEV_SUM="$(dev_sum)"
+
+LT_CFG="$TEST_TMP/lt_cfg"
+LT_TAR="$TEST_TMP/lt.tar.gz"
+HOME="$LT_HOME" USERPROFILE="$LT_HOME" run_backup --source "$LT_HOME/.omp" --config-dir "$LT_CFG" -o "$LT_TAR" --no-upstream >/dev/null
+LT_MANIFEST="$LT_CFG/extension-loader-shims.tsv"
+LT_EXPECT_ROW="$(printf 'typesafe-planner\tts\t{{USER_HOME}}/Projects/omp_extension/typesafe-planner.ts')"
+if [ ! -f "$LT_MANIFEST" ] \
+    || [ "$(cat "$LT_MANIFEST")" != "$LT_EXPECT_ROW" ] \
+    || [ ! -f "$LT_CFG/agent/extensions/typesafe-planner/index.ts" ] \
+    || [ -e "$LT_CFG/agent/extensions/typesafe-planner.ts" ]; then
+    echo "FAIL: backup did not mark the typesafe-planner loader shim (manifest) alongside the portable dereferenced copy."
+    cat "$LT_MANIFEST" 2>/dev/null || true
+    exit 1
+fi
+echo "✓ PASS: backup marks the loader shim (home-relative target) and keeps the portable deref copy."
+
+# A. Machine with the loader: loader byte-identical, no second copy, dev repo untouched
+HOME="$LT_HOME" USERPROFILE="$LT_HOME" run_restore --source-tar "$LT_TAR" --target-dir "$LT_HOME/.omp" --no-install --no-upstream >/dev/null 2>&1
+if [ "$(cat "$LT_HOME/.omp/agent/extensions/typesafe-planner.ts")" != "$LT_LOADER" ] \
+    || [ -e "$LT_HOME/.omp/agent/extensions/typesafe-planner" ]; then
+    echo "FAIL: restore replaced the loader or installed typesafe-planner/ next to it."
+    ls -la "$LT_HOME/.omp/agent/extensions" >&2
+    exit 1
+fi
+if [ "$(dev_sum)" != "$LT_DEV_SUM" ]; then
+    echo "FAIL: restore modified ~/Projects/omp_extension."
+    exit 1
+fi
+echo "✓ PASS: restore keeps the loader, skips the deref copy, never touches the dev repo."
+
+# B. Legacy snapshot without manifest still must not clobber the loader
+rm -f "$LT_CFG/extension-loader-shims.tsv"
+HOME="$LT_HOME" USERPROFILE="$LT_HOME" run_restore --config-dir "$LT_CFG" --target-dir "$LT_HOME/.omp" --no-install --no-upstream >/dev/null 2>&1
+if [ "$(cat "$LT_HOME/.omp/agent/extensions/typesafe-planner.ts")" != "$LT_LOADER" ] \
+    || [ -e "$LT_HOME/.omp/agent/extensions/typesafe-planner" ]; then
+    echo "FAIL: manifest-less snapshot clobbered the loader."
+    exit 1
+fi
+echo "✓ PASS: manifest-less (legacy) snapshot cannot clobber an existing loader."
+
+# C. Loader missing but target exists: loader recreated from the manifest, no deref dir
+LT_LOST="$TEST_TMP/lt_lost/.omp"
+mkdir -p "$LT_LOST"
+HOME="$LT_HOME" USERPROFILE="$LT_HOME" run_restore --source-tar "$LT_TAR" --target-dir "$LT_LOST" --no-install --no-upstream >/dev/null 2>&1
+if [ "$(cat "$LT_LOST/agent/extensions/typesafe-planner.ts")" != "$LT_LOADER" ] \
+    || [ -e "$LT_LOST/agent/extensions/typesafe-planner" ]; then
+    echo "FAIL: loader not recreated from manifest when its target exists."
+    exit 1
+fi
+echo "✓ PASS: missing loader recreated (1-line) when the target exists; deref copy skipped."
+
+# D. Machine without the target: portable fallback to the dereferenced package, with a warning
+LT_OTHER_HOME="$TEST_TMP/lt_other_home"
+LT_FALLBACK="$LT_OTHER_HOME/.omp"
+mkdir -p "$LT_OTHER_HOME"
+HOME="$LT_OTHER_HOME" USERPROFILE="$LT_OTHER_HOME" run_restore --source-tar "$LT_TAR" --target-dir "$LT_FALLBACK" --no-install --no-upstream >"$TEST_TMP/lt_fallback.out" 2>&1
+if [ ! -f "$LT_FALLBACK/agent/extensions/typesafe-planner/index.ts" ] \
+    || [ ! -f "$LT_FALLBACK/agent/extensions/typesafe-planner/src/x.ts" ] \
+    || [ -e "$LT_FALLBACK/agent/extensions/typesafe-planner.ts" ] \
+    || ! grep -q 'loader target for typesafe-planner not found' "$TEST_TMP/lt_fallback.out"; then
+    echo "FAIL: machine without the target did not fall back to the dereferenced package with a warning."
+    exit 1
+fi
+echo "✓ PASS: no target on this machine -> portable dereferenced package installed + warning."
 
 echo "=== ALL TDD TESTS PASSED ==="

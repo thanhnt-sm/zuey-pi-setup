@@ -72,9 +72,10 @@ test -f "$OUT_CFG/agent/tools-requirements.txt"
 grep -q '{{OMP_SKILLS_OPTIN_DIR}}' "$OUT_CFG/agent/config.yml"
 echo "✓ PASS: Multi-hop deref (../tools/paired.ts), agents, Priority-100 skills, optin, commands, rules & templates captured."
 
-# Restore under simulated Darwin/macOS (--no-install)
+# Restore under simulated Darwin/macOS (--no-install). Fresh HOME = a new machine: the shim target
+# (under the real HOME here) is absent, so the portable dereferenced package must be installed.
 RESTORE_TGT="$TEST_TMP/restored_darwin"
-OS_OVERRIDE="Darwin" "$BASH" "$RESTORE_SCRIPT" --source-tar "$OUT_TAR" --target-dir "$RESTORE_TGT" --no-install --no-upstream
+OS_OVERRIDE="Darwin" HOME="$TEST_TMP/new_machine_home" USERPROFILE="$TEST_TMP/new_machine_home" "$BASH" "$RESTORE_SCRIPT" --source-tar "$OUT_TAR" --target-dir "$RESTORE_TGT" --no-install --no-upstream
 test -f "$RESTORE_TGT/agent/agents/pmo-ba.md"
 test -f "$RESTORE_TGT/agent/skills/demo-suite/SKILL.md"
 test -f "$RESTORE_TGT/agent/extensions/planner/tools/paired.ts"
