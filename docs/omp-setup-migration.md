@@ -151,11 +151,14 @@ Chỉ cần chạy một lệnh duy nhất:
 
 **Script sẽ tự động:**
 1. Phát hiện hệ điều hành và thay `shellPath: {{SHELL_PATH}}` (macOS → `/bin/zsh`; Windows → `$GIT_BASH_BIN`, `C:\Program Files\Git\bin\bash.exe`, hoặc bash của Git qua `cygpath`; không bao giờ chọn WSL `System32\bash.exe`).
-2. Copy mọi file trong `~/.omp` sắp bị ghi đè vào `~/.omp/restore-backups/<timestamp>/`.
-3. Copy snapshot (kể cả dotfile như `.env.example`) vào `~/.omp/`.
-4. Áp overlay upstream: chỉ **thêm** `APPEND_SYSTEM.md`/extension/plugin dep còn thiếu, không ghi đè file đã có. Bỏ qua bằng `--no-upstream`.
-5. Sinh `~/.omp/agent/.env` từ `.env.example` nếu chưa có.
-6. Cài đặt plugin trong `~/.omp/plugins` (`bun install`) và tự tạo/cài `~/.omp/tools-venv` từ `agent/tools-requirements.txt` (bỏ qua bằng `--no-install`).
+2. Đối chiếu extension dereferenced với loader shim của máy (xem dưới): máy đã có loader 1 dòng thì **giữ nguyên loader, không cài** thư mục `extensions/<name>/`.
+3. Copy mọi file trong `~/.omp` sắp bị ghi đè vào `~/.omp/restore-backups/<timestamp>/`.
+4. Copy snapshot (kể cả dotfile như `.env.example`) vào `~/.omp/`.
+5. Áp overlay upstream: chỉ **thêm** `APPEND_SYSTEM.md`/extension/plugin dep còn thiếu, không ghi đè file đã có. Bỏ qua bằng `--no-upstream`.
+6. Sinh `~/.omp/agent/.env` từ `.env.example` nếu chưa có.
+7. Cài đặt plugin trong `~/.omp/plugins` (`bun install`) và tự tạo/cài `~/.omp/tools-venv` từ `agent/tools-requirements.txt` (bỏ qua bằng `--no-install`).
+
+**Loader shim `typesafe-planner.ts` (máy đã cài bản dev):** `~/.omp/agent/extensions/typesafe-planner.ts` là loader 1 dòng trỏ tới `~/Projects/omp_extension/typesafe-planner.ts`; thư mục đó chỉ do `sync-baseline.cjs` của repo `omp_extension` quản lý, restore không được chạm. Backup ghi `extension-loader-shims.tsv` (cột: tên, đuôi, target `{{USER_HOME}}/...`) cạnh bản dereferenced. Khi restore: có loader → giữ nguyên; chưa có loader nhưng target tồn tại → tạo lại loader; không có target → cài bản dereferenced (portable) kèm cảnh báo `loader target for <name> not found`. Snapshot cũ chưa có manifest vẫn không ghi đè loader đang có. `omp-private-restore.sh` bỏ qua `Projects/omp_extension` trong archive nếu thư mục đã tồn tại. Kiểm tra bằng `python3 scripts/omp-doctor.py` (mục `loaderTopology`).
 
 > Trên máy đang dùng, **không** chạy restore để "đồng bộ": `config.yml`/`models.yml` của máy thật thường mới hơn snapshot. Hướng đúng là máy thật → repo (backup).
 
@@ -226,6 +229,8 @@ omp
 
 ```bash
 ./tests/test-omp-migration.sh
+./tests/test-omp-private-restore.sh
+./tests/test-omp-doctor-loader-topology.sh
 ```
 
 Nếu tất cả các tiêu chí bảo mật và tính tương thích được thỏa mãn, terminal sẽ xuất:
