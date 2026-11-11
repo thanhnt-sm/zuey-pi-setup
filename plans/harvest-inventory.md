@@ -1,22 +1,22 @@
 # OMP Harvest Inventory & Deduplication Report
 
-- **Generated:** 2026-11-11 03:11:41 UTC
-- **OMP Sessions Scanned:** 70 (44 top, 26 subagents; 65 advisors skipped, 0 advisors included)
-- **Claude Sessions Scanned:** 280 (40 top, 240 subagents/journals; 129 history.jsonl entries)
-- **Incremental Skips (Unchanged Watermarks):** 342
-- **Total Candidate Artifacts Indexed:** 2884 (Actionable: 783, Ephemeral Noise Filtered: 2101)
-- **Unique Code Hashes:** 2382
+- **Generated:** 2026-11-11 05:17:49 UTC
+- **OMP Sessions Scanned:** 71 (39 top, 32 subagents; 66 advisors skipped, 0 advisors included)
+- **Claude Sessions Scanned:** 288 (40 top, 248 subagents/journals; 131 history.jsonl entries)
+- **Incremental Skips (Unchanged Watermarks):** 348
+- **Total Candidate Artifacts Indexed:** 2959 (Actionable: 789, Ephemeral Noise Filtered: 2170)
+- **Unique Code Hashes:** 2429
 
 ## 1. Summary by Target Suite
 
 | Target Suite | Extracted Artifacts | Target OMP Priority-100 Location |
 |---|---:|---|
-| **`general_utilities`** | 2284 | Triaged (Tier A promoted / Tier B opt-in / Tier C excluded) |
+| **`general_utilities`** | 2350 | Triaged (Tier A promoted / Tier B opt-in / Tier C excluded) |
 | **`pmo_project_suite`** | 383 | `config/omp/agent/skills/pmo-project-suite` |
-| **`system_maintenance_suite`** | 119 | `config/omp/agent/skills/system-maintenance-suite` |
-| **`office_doc_suite`** | 61 | `config/omp/agent/skills/office-doc-suite` |
+| **`system_maintenance_suite`** | 120 | `config/omp/agent/skills/system-maintenance-suite` |
+| **`office_doc_suite`** | 63 | `config/omp/agent/skills/office-doc-suite` |
 | **`email_intelligence_suite`** | 22 | `config/omp/agent/skills/email-intelligence-suite` |
-| **`dev_ops_automation`** | 15 | Classified dev/ops automation helpers (promotionQueue candidates) |
+| **`dev_ops_automation`** | 21 | Classified dev/ops automation helpers (promotionQueue candidates) |
 
 ## 2. Top Duplicated Code Clusters (Repeated Utilities)
 
@@ -38,31 +38,14 @@ Found **11** actionable duplicate code clusters across scanned sessions and work
 
 ## 3. Global vs Project `.omp`/`.claude`/`.agent` Delta Summary
 
-- **Project Config Dirs Scanned (Tier C excluded):** 87
-- **Dirs with Unpromoted Assets / Links:** 19
+- **Project Config Dirs Scanned (Tier C excluded):** 55
+- **Dirs with Unpromoted Assets / Links:** 2
 - **Container-level Links Detected:** 3
 
 | Project Config Dir | Missing from Global OMP | Links/Junctions |
 |---|---|---|
-| `<local-workspace>/.Backup_Tool/.claude` | skills:1 | - |
 | `<local-workspace>/_Tool/.claude` | - | 6 |
-| `<local-workspace>/PM_PhanTich/.claude` | skills:1 | - |
-| `<local-workspace>/104_PM_PhanTich/.claude` | skills:1 | - |
-| `<local-workspace>/claudekit-marketing/.claude` | skills:50, agents:19, commands:1 | - |
 | `<local-workspace>/eco_support_net_oracle/.omp` | - | 1 |
-| `<local-workspace>/OutlookOkan/.claude` | commands:1 | - |
-| `<local-workspace>/OutlookOkan/.agent` | skills:39, agents:14, rules:1 | - |
-| `<local-workspace>/NanoResearch-main/.claude` | commands:9 | - |
-| `<local-workspace>/OpenHarness/.claude` | skills:2 | - |
-| `<local-workspace>/TMP_Source/.agent` | skills:35, agents:9, rules:20 | - |
-| `<local-workspace>/08_Bot/.claude` | skills:37, agents:23, commands:21 | - |
-| `<local-workspace>/01_Setup_HOME/.claude` | skills:3 | - |
-| `<local-workspace>/01_Setup_HOME/.agent` | skills:12, agents:15, rules:11 | - |
-| `<local-workspace>/10_DesignDatabase_Code_To_Relation_Key_Mermaid/.agent` | skills:39, agents:9, rules:20 | - |
-| `<local-workspace>/02_Emails_Export/.claude` | - | 1 |
-| `<local-workspace>/rtk/.claude` | skills:11, agents:4, commands:7, rules:3 | - |
-| `<local-workspace>/CleanPC/.claude` | skills:2 | - |
-| `<local-workspace>/Windows_change_device_keepDATA/.agent` | skills:31, agents:9, rules:10 | - |
 
 ## 4. Recommended Consolidation Actions
 

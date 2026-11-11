@@ -17,7 +17,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from cleaner_dispatcher import find_orphan_leftovers, find_stale_project_artifacts, run_cleanup  # noqa: E402
+from cleaner_dispatcher import find_orphan_leftovers, find_stale_project_artifacts, prune_omp_sessions, run_cleanup  # noqa: E402
 from uninstaller_builder import generate_uninstaller_suite  # noqa: E402
 
 
@@ -56,6 +56,11 @@ def run_command(args: argparse.Namespace) -> int:
                 raise ValueError("--tool <name> is required for generate-uninstaller")
             out_dir = args.output or f"./uninstall_{args.tool.strip().lower()}"
             res = generate_uninstaller_suite(args.tool, out_dir, package_id=args.package or "")
+            _emit(res, args.json)
+            return 0
+        if cmd == "omp-prune":
+            dry = not args.force if not args.dry_run else True
+            res = prune_omp_sessions(days_old=args.days_old, dry_run=dry, force=args.force)
             _emit(res, args.json)
             return 0
         raise ValueError(f"Unknown command: {cmd}")
@@ -103,7 +108,7 @@ def run_interactive_menu() -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="OMP System Maintenance Suite Dual-Mode CLI")
-    p.add_argument("--cmd", choices=["analyze", "clean", "stale-scan", "orphan-scan", "generate-uninstaller"])
+    p.add_argument("--cmd", choices=["analyze", "clean", "stale-scan", "orphan-scan", "generate-uninstaller", "omp-prune"])
     p.add_argument("--mode", default="quick", choices=["quick", "dev", "system", "extended", "full"])
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--force", action="store_true", help="Explicit authorization for cache deletion")
@@ -111,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--roots", nargs="*", default=None, help="Workspace roots for stale-scan / orphan-scan")
     p.add_argument("--tool", help="Target tool name for uninstaller generation")
     p.add_argument("--stale-days", type=int, default=90, help="Inactivity threshold in days for stale-scan")
+    p.add_argument("--days-old", type=int, default=7, help="Inactivity threshold in days for omp-prune")
     p.add_argument("--package", default="", help="npm/brew/winget package id")
     p.add_argument("--output", help="Output directory for generated uninstallers")
     p.add_argument("--json", action="store_true")

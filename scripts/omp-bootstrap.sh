@@ -25,6 +25,7 @@ PASSPHRASE_FILE="${OMP_BACKUP_PASSPHRASE_FILE:-}"
 SKIP_PULL=0
 NO_INSTALL=0
 LINK_MIRRORS=0
+LINK_CLAUDE=0
 DRY_RUN=0
 STRICT=0
 NO_LOCAL_CONFIG=0
@@ -45,7 +46,7 @@ while [[ $# -gt 0 ]]; do
 		--skip-pull) SKIP_PULL=1; shift ;;
 		--no-install) NO_INSTALL=1; shift ;;
 		--link-mirrors) LINK_MIRRORS=1; shift ;;
-		--dry-run) DRY_RUN=1; shift ;;
+		--link-claude) LINK_CLAUDE=1; shift ;;
 		--strict) STRICT=1; shift ;;
 		--no-local-config) NO_LOCAL_CONFIG=1; shift ;;
 		--json) DOCTOR_JSON=1; shift ;;
@@ -125,6 +126,36 @@ if [ "$MODE" = "restore" ]; then
 		else
 			"$PY_BIN" "$REPO_DIR/scripts/omp-link-local.py" "${LINK_ARGS[@]}" --apply --json
 			"$PY_BIN" "$REPO_DIR/scripts/omp-link-local.py" "${LINK_ARGS[@]}" --verify --json
+		fi
+	fi
+	if [ "$LINK_CLAUDE" -eq 1 ]; then
+		echo "-> Linking OMP suite skills and routing rules into ~/.claude..."
+		CLAUDE_DIR="$USER_HOME/.claude"
+		if [ -d "$CLAUDE_DIR" ]; then
+			mkdir -p "$CLAUDE_DIR/rules" "$CLAUDE_DIR/skills"
+			BAK_TS="$(date +%Y%m%d%H%M%S)"
+			BAK_DIR="$TARGET_DIR/restore-backups/claude-link-$BAK_TS"
+			mkdir -p "$BAK_DIR"
+			for rf in file-type-enforcement.md skill-domain-routing.md; do
+				if [ -f "$REPO_DIR/config/omp/agent/rules/$rf" ]; then
+					[ -f "$CLAUDE_DIR/rules/$rf" ] && cp "$CLAUDE_DIR/rules/$rf" "$BAK_DIR/$rf"
+					cp "$REPO_DIR/config/omp/agent/rules/$rf" "$CLAUDE_DIR/rules/$rf"
+				fi
+			done
+			for suite in pmo-project-suite office-doc-suite email-intelligence-suite system-maintenance-suite; do
+				src_s="$TARGET_DIR/agent/skills/$suite"
+				dst_s="$CLAUDE_DIR/skills/$suite"
+				if [ -d "$src_s" ] && [ ! -e "$dst_s" ]; then
+					if command -v cygpath >/dev/null 2>&1; then
+						cmd.exe /c mklink /J "$(cygpath -w "$dst_s")" "$(cygpath -w "$src_s")" >/dev/null 2>&1 || cp -r "$src_s" "$dst_s"
+					else
+						ln -s "$src_s" "$dst_s" 2>/dev/null || cp -r "$src_s" "$dst_s"
+					fi
+				fi
+			done
+			echo "✓ Linked OMP suite skills and routing rules into $CLAUDE_DIR."
+		else
+			echo "Notice: ~/.claude directory not found; skipping --link-claude."
 		fi
 	fi
 

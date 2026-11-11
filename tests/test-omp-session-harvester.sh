@@ -427,5 +427,39 @@ rs = json.load(sys.stdin)
 assert rs.get('stop') is True and rs.get('pendingCount') == 0, rs
 "
 
+echo "=== [TDD] Phase 2 V5: skills-optin in g_skills, override/archive filter, and workspace script extract ==="
+P5_GLOBAL="$TMP_DIR/p5_global"
+P5_PROJ="$TMP_DIR/p5_proj"
+mkdir -p "$P5_GLOBAL/skills" "$P5_GLOBAL/skills-optin/shared-optin-tool" "$P5_GLOBAL/agents" "$P5_GLOBAL/commands" "$P5_GLOBAL/rules"
+mkdir -p "$P5_PROJ/.claude/skills/shared-optin-tool" "$P5_PROJ/.claude/skills/override-custom-tool"
+P5_CFG="$TMP_DIR/p5_harvest_config.json"
+P5_LOCAL_CFG="$TMP_DIR/p5_harvest_local.json"
+cat <<EOF > "$P5_CFG"
+{
+  "version": "2.0.0",
+  "scanRoots": ["$P5_PROJ"],
+  "excludeDirNames": ["node_modules", ".git"]
+}
+EOF
+cat <<EOF > "$P5_LOCAL_CFG"
+{
+  "version": "2.0.0",
+  "workspaceClassification": {
+    "override": ["$P5_PROJ/.claude"]
+  }
+}
+EOF
 
-echo "[v] PASS: test-omp-session-harvester.sh V2+V3+V4 (incl. Phase 1 noise filter & queue loop) passed all assertions."
+# 5a) By default, classified override dir and skills-optin match are suppressed from unpromotedDeltaDirs
+python "$ROOT/scripts/omp-session-harvester.py" --scan --diff-global --no-local-config \
+  --sessions-dir "$WIN_TMP/p4_sessions" --claude-projects-dir "" --history-db "" \
+  --config "$P5_CFG" --ledger "$WIN_TMP/p5_ledger.json" --report "$WIN_TMP/p5_report.md" >/dev/null
+
+python -c "
+import json
+d = json.load(open('$WIN_TMP/p5_ledger.json', encoding='utf-8'))
+deltas = d.get('driftDetails', {}).get('unpromotedDeltaDirs', [])
+assert not any('shared-optin-tool' in x for x in deltas), f'skills-optin leaked as missing: {deltas}'
+"
+
+echo "[v] PASS: test-omp-session-harvester.sh V2+V3+V4+V5 passed all assertions."

@@ -4,6 +4,31 @@
       "version": "0.6.0",
       "enabledFeatures": null,
       "enabled": true
+    },
+    "pi-footer": {
+      "version": "0.5.1",
+      "enabledFeatures": null,
+      "enabled": true
+    },
+    "pi-smart-fetch": {
+      "version": "0.3.17",
+      "enabledFeatures": null,
+      "enabled": true
+    },
+    "@tmustier/pi-session-recap": {
+      "version": "0.2.0",
+      "enabledFeatures": null,
+      "enabled": true
+    },
+    "pi-worktree": {
+      "version": "0.1.0",
+      "enabledFeatures": null,
+      "enabled": true
+    },
+    "@injaneity/pi-computer-use": {
+      "version": "0.1.0",
+      "enabledFeatures": null,
+      "enabled": true
     }
   },
   "settings": {}

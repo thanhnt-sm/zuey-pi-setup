@@ -8,6 +8,8 @@
 #   --history                ~/.omp/agent/history.db (prompt history, session titles/recaps)
 #   --sessions               ~/.omp/agent/sessions/*.jsonl + ~/.claude/projects/**/*.jsonl + memory/ (opt-in, excluded from --all)
 #   --typesafe-kit           ~/.claude/mcp/typesafe/, ~/.claude/hooks/lib/typesafe-enabled-resolver.cjs, ~/.claude/.ck.json
+#   --include-dev-repos      External local development repositories (default: ~/Projects/omp_extension; prunes node_modules/.venv)
+#   --dev-repo <path>        Custom external repo relative to $USER_HOME to archive alongside --include-dev-repos
 #   --claude                 Full portable ~/.claude/ ecosystem with {{CLAUDE_NODE}} / {{USER_HOME}} templating
 #   --all                    All core private state (--memory --history --typesafe-kit --claude; does not include --sessions)
 #
@@ -24,7 +26,8 @@ WANT_KIT=0
 WANT_CLAUDE=0
 WANT_SESSIONS=0
 INCLUDE_SCRATCH=0
-
+WANT_DEV_REPOS=0
+DEV_REPOS=()
 usage() {
 	sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
 }
@@ -38,6 +41,8 @@ while [[ $# -gt 0 ]]; do
 		--typesafe-kit) WANT_KIT=1; shift ;;
 		--claude) WANT_CLAUDE=1; shift ;;
 		--all) WANT_MEMORY=1; WANT_HISTORY=1; WANT_KIT=1; WANT_CLAUDE=1; shift ;;
+		--include-dev-repos) WANT_DEV_REPOS=1; shift ;;
+		--dev-repo) WANT_DEV_REPOS=1; DEV_REPOS+=("$2"); shift 2 ;;
 		--source) OMP_SRC="$2"; shift 2 ;;
 		--home) USER_HOME="$2"; shift 2 ;;
 		-o|--output) OUT="$2"; shift 2 ;;
@@ -47,8 +52,8 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-if [ "$WANT_MEMORY$WANT_HISTORY$WANT_KIT$WANT_CLAUDE$WANT_SESSIONS" = "00000" ]; then
-	echo "Error: nothing selected. Use --memory, --history, --sessions, --typesafe-kit, --claude or --all." >&2
+if [ "$WANT_MEMORY$WANT_HISTORY$WANT_KIT$WANT_CLAUDE$WANT_SESSIONS$WANT_DEV_REPOS" = "000000" ]; then
+	echo "Error: nothing selected. Use --memory, --history, --sessions, --typesafe-kit, --claude, --include-dev-repos or --all." >&2
 	exit 1
 fi
 
@@ -380,6 +385,49 @@ if [ "$WANT_KIT" -eq 1 ] || [ "$WANT_CLAUDE" -eq 1 ]; then
 		COUNT=$((COUNT + 1))
 		echo "-> mcp: templatized .omp/agent/mcp.json"
 	fi
+fi
+if [ "$WANT_DEV_REPOS" -eq 1 ]; then
+	[ "${#DEV_REPOS[@]}" -eq 0 ] && DEV_REPOS=("Projects/omp_extension")
+	dev_count=0
+	for d_entry in "${DEV_REPOS[@]}"; do
+		if [ -d "$USER_HOME/$d_entry" ]; then
+			src_d="$USER_HOME/$d_entry"
+			dst_d="$STAGE_DIR/$d_entry"
+			echo "-> dev-repo: $d_entry (pruning node_modules, .venv, git logs)..."
+			mkdir -p "$dst_d"
+			if command -v python3 >/dev/null 2>&1 && python3 -c "import shutil" >/dev/null 2>&1; then
+				python3 - "$(native_path "$src_d")" "$(native_path "$dst_d")" <<'PY'
+import os, re, shutil, sys
+src, dst = sys.argv[1], sys.argv[2]
+SKIP_DIRS = {"node_modules", ".venv", "venv", "__pycache__", ".logs", "dist", "build"}
+def _ignore(cur, names):
+    rel = os.path.relpath(cur, src).replace("\\", "/")
+    ignored = set()
+    for n in names:
+        if n in SKIP_DIRS or n.endswith((".pyc", ".bak", ".log", ".tmp")):
+            ignored.add(n)
+        if rel.startswith(".git") and n in ("logs", "hooks"):
+            ignored.add(n)
+    return ignored
+shutil.copytree(src, dst, symlinks=False, ignore=_ignore, dirs_exist_ok=True)
+git_cfg = os.path.join(dst, ".git", "config")
+if os.path.isfile(git_cfg):
+    txt = open(git_cfg, "r", encoding="utf-8", errors="ignore").read()
+    txt = re.sub(r"://[^@\s]+@", "://", txt)
+    open(git_cfg, "w", encoding="utf-8").write(txt)
+PY
+			else
+				cp -rL "$src_d/." "$dst_d/"
+				find "$dst_d" \( -name 'node_modules' -o -name '.venv' -o -name 'venv' -o -name '__pycache__' \) -type d -prune -exec rm -rf {} + 2>/dev/null || true
+				find "$dst_d" -type f \( -name '*.pyc' -o -name '*.bak*' -o -name '*.log' \) -delete 2>/dev/null || true
+				rm -rf "$dst_d/.git/logs" 2>/dev/null || true
+			fi
+			dev_count=$((dev_count + 1))
+			COUNT=$((COUNT + 1))
+		else
+			echo "Warning: --include-dev-repos: $USER_HOME/$d_entry not found." >&2
+		fi
+	done
 fi
 
 if [ "$COUNT" -eq 0 ]; then

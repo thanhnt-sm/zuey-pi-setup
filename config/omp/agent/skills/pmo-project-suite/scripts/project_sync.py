@@ -496,3 +496,139 @@ def export_mpp_via_windows_com(mpp_path: Union[str, Path], xml_out_path: Union[s
     if res.returncode != 0:
         raise RuntimeError(f"MSProject COM export failed: {res.stderr.strip() or res.stdout.strip()}")
     return {"mpp_path": str(mpp), "xml_out": str(xml_out), "status": "exported"}
+
+
+def compare_schedule_workbooks(
+    left_xlsx: Union[str, Path],
+    right_xlsx: Union[str, Path],
+    key_col: str = "UID",
+    output_xlsx: Optional[Union[str, Path]] = None,
+    profile_path: Optional[Union[str, Path]] = None,
+) -> Dict[str, Any]:
+    prof = load_sync_profile(profile_path)
+    p_left, p_right = Path(left_xlsx), Path(right_xlsx)
+    if not p_left.is_file():
+        raise FileNotFoundError(f"Left schedule file not found: {p_left}")
+    if not p_right.is_file():
+        raise FileNotFoundError(f"Right schedule file not found: {p_right}")
+
+    def _load_rows(p: Path) -> List[Dict[str, Any]]:
+        wb = openpyxl.load_workbook(p, data_only=False)
+        ws = wb[prof["worksheet"]] if prof["worksheet"] in wb.sheetnames else wb[wb.sheetnames[0]]
+        first_r = prof.get("firstDataRow", 2)
+        hdr_row = max(1, first_r - 1)
+        headers = [str(ws.cell(hdr_row, c).value or "").strip() for c in range(1, ws.max_column + 1)]
+        col_map = {h: idx + 1 for idx, h in enumerate(headers) if h}
+        rows: List[Dict[str, Any]] = []
+        for r in range(hdr_row + 1, ws.max_row + 1):
+            item: Dict[str, Any] = {}
+            for col_name, c_idx in col_map.items():
+                item[col_name] = ws.cell(r, c_idx).value
+            if any(v is not None and str(v).strip() != "" for v in item.values()):
+                rows.append(item)
+        wb.close()
+        return rows
+
+    left_rows = _load_rows(p_left)
+    right_rows = _load_rows(p_right)
+
+    left_by_key = {str(r.get(key_col, "")).strip(): r for r in left_rows if str(r.get(key_col, "")).strip()}
+    right_by_key = {str(r.get(key_col, "")).strip(): r for r in right_rows if str(r.get(key_col, "")).strip()}
+
+    added = [r for k, r in right_by_key.items() if k not in left_by_key]
+    removed = [r for k, r in left_by_key.items() if k not in right_by_key]
+    changed: List[Dict[str, Any]] = []
+    identical = 0
+
+    for k, l_row in left_by_key.items():
+        if k in right_by_key:
+            r_row = right_by_key[k]
+            diff_fields: Dict[str, Dict[str, Any]] = {}
+            for col in EXCEL_COLUMNS:
+                if col in l_row or col in r_row:
+                    lv = l_row.get(col)
+                    rv = r_row.get(col)
+                    if col == "PercentComplete":
+                        lv_f = _parse_excel_pct(lv)
+                        rv_f = _parse_excel_pct(rv)
+                        if abs(lv_f - rv_f) > 0.0001:
+                            diff_fields[col] = {"left": lv_f, "right": rv_f}
+                    else:
+                        if str(lv or "").strip() != str(rv or "").strip():
+                            diff_fields[col] = {"left": lv, "right": rv}
+            if diff_fields:
+                changed.append({key_col: k, "name": r_row.get("Task Name") or l_row.get("Task Name", ""), "fields": diff_fields})
+            else:
+                identical += 1
+
+    md_lines = [
+        "# Schedule Comparison Report",
+        "",
+        f"- **Left (Baseline):** `{p_left.name}` ({len(left_rows)} tasks)",
+        f"- **Right (Compare):** `{p_right.name}` ({len(right_rows)} tasks)",
+        f"- **Summary:** Added: **{len(added)}**, Removed: **{len(removed)}**, Changed: **{len(changed)}**, Identical: **{identical}**",
+        "",
+    ]
+    if changed:
+        md_lines.extend(["## Changed Tasks", "| Key | Task Name | Changed Fields |", "|---|---|---|"])
+        for c in changed:
+            f_str = ", ".join(f"{k}: {v['left']} -> {v['right']}" for k, v in c["fields"].items())
+            md_lines.append(f"| {c[key_col]} | {c['name']} | {f_str} |")
+        md_lines.append("")
+    if added:
+        md_lines.extend(["## Added Tasks", f"Total: {len(added)} tasks added in right workbook.", ""])
+    if removed:
+        md_lines.extend(["## Removed Tasks", f"Total: {len(removed)} tasks missing from right workbook.", ""])
+
+    if output_xlsx:
+        out_p = Path(output_xlsx)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        wb = openpyxl.Workbook()
+        ws_sum = wb.active
+        ws_sum.title = "Summary"
+        ws_sum.append(["Metric", "Value"])
+        ws_sum.append(["Left Workbook", str(p_left.name)])
+        ws_sum.append(["Right Workbook", str(p_right.name)])
+        ws_sum.append(["Added Count", len(added)])
+        ws_sum.append(["Removed Count", len(removed)])
+        ws_sum.append(["Changed Count", len(changed)])
+        ws_sum.append(["Identical Count", identical])
+
+        if changed:
+            ws_c = wb.create_sheet("Changed")
+            ws_c.append(["Key", "Task Name", "Field", "Left Value", "Right Value"])
+            for c in changed:
+                for f_name, f_diff in c["fields"].items():
+                    ws_c.append([
+                        sanitize_cell_formula_injection(str(c[key_col])),
+                        sanitize_cell_formula_injection(str(c["name"])),
+                        f_name,
+                        sanitize_cell_formula_injection(str(f_diff["left"])),
+                        sanitize_cell_formula_injection(str(f_diff["right"])),
+                    ])
+        if added:
+            ws_a = wb.create_sheet("Added")
+            ws_a.append(EXCEL_COLUMNS)
+            for r in added:
+                ws_a.append([sanitize_cell_formula_injection(str(r.get(col, ""))) for col in EXCEL_COLUMNS])
+        if removed:
+            ws_r = wb.create_sheet("Removed")
+            ws_r.append(EXCEL_COLUMNS)
+            for r in removed:
+                ws_r.append([sanitize_cell_formula_injection(str(r.get(col, ""))) for col in EXCEL_COLUMNS])
+
+        wb.save(out_p)
+        wb.close()
+
+    return {
+        "is_valid": True,
+        "key_col": key_col,
+        "left_count": len(left_rows),
+        "right_count": len(right_rows),
+        "added_count": len(added),
+        "removed_count": len(removed),
+        "changed_count": len(changed),
+        "identical_count": identical,
+        "markdown": "\n".join(md_lines),
+        "output_xlsx": str(output_xlsx) if output_xlsx else None,
+    }

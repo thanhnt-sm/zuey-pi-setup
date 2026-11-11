@@ -59,6 +59,7 @@ from note_raid_tracker import (  # noqa: E402
 from project_sync import (  # noqa: E402
     SyncConflictError,
     build_msp_xml_from_excel,
+    compare_schedule_workbooks,
     export_mpp_via_windows_com,
     export_msp_xml_to_excel,
     extract_sprint_from_schedule,
@@ -291,6 +292,20 @@ def run_command(args: argparse.Namespace) -> int:
             _emit(export_mpp_via_windows_com(args.input, out_xml), args.json)
             return 0
 
+        if cmd == "xlsx-diff":
+            right = args.compare or args.right
+            if not right:
+                raise ValueError("--compare (or --right) is required for xlsx-diff")
+            res = compare_schedule_workbooks(
+                left_xlsx=args.input,
+                right_xlsx=right,
+                key_col=getattr(args, "key_col", "UID") or "UID",
+                output_xlsx=args.output if str(args.output or "").lower().endswith(".xlsx") else None,
+                profile_path=args.profile,
+            )
+            _emit(res, args.json, output_path=args.output if str(args.output or "").lower().endswith(".md") else None)
+            return 0
+
         raise ValueError(f"Unknown command: {cmd}")
     except SyncConflictError as exc:
         err = {"is_valid": False, "error": str(exc), "conflicts": exc.conflicts}
@@ -364,7 +379,7 @@ def build_parser() -> argparse.ArgumentParser:
         "cpm", "evm", "verified-delivery", "pert", "wbs", "risk", "rtm", "capacity", "sprint-metrics",
         "dates", "obligation", "cr", "security", "manifest", "audit", "report",
         "raid-init", "raid", "raid-report", "note-doctor", "note-lint", "note-plan", "note-roll", "note-archive",
-        "msp2xlsx", "xlsx2msp", "excel2xml", "sprint-export", "mpp2xml",
+        "msp2xlsx", "xlsx2msp", "excel2xml", "sprint-export", "mpp2xml", "xlsx-diff",
     ])
     p.add_argument("--input", help="Input JSON / .pmn / .xml / .xlsx / archive path")
     p.add_argument("--output", help="Output path")
@@ -383,6 +398,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--policy", default="Project", choices=["Project", "Excel", "Block"])
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--compare", help="Second workbook path for xlsx-diff")
+    p.add_argument("--right", help="Alias for --compare")
+    p.add_argument("--key-col", default="UID", help="Primary key column for xlsx-diff")
     return p
 
 

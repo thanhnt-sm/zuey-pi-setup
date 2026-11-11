@@ -254,6 +254,42 @@ def _check_repo_leaks(repo_dir: Optional[Path], errors: List[str]) -> Dict[str, 
     }
 
 
+def _check_darwin_readiness(os_kind: str, warnings: List[str]) -> Dict[str, Any]:
+    if os_kind != "darwin":
+        return {"applicable": False}
+    has_pinentry = bool(shutil.which("pinentry-mac") or Path("/opt/homebrew/bin/pinentry-mac").exists())
+    has_mpxj = bool(shutil.which("mpxj") or shutil.which("java"))
+    has_homebrew = bool(shutil.which("brew") or Path("/opt/homebrew/bin/brew").exists())
+    if not has_pinentry:
+        warnings.append("Darwin: pinentry-mac not found (brew install pinentry-mac recommended for Apple Silicon GPG).")
+    return {"applicable": True, "pinentryMac": has_pinentry, "mpxjOrJava": has_mpxj, "homebrew": has_homebrew}
+
+
+def _check_rules_drift(repo_dir: Optional[Path], target_dir: Path, warnings: List[str]) -> Dict[str, Any]:
+    if not repo_dir:
+        return {"checked": False}
+    repo_rule = repo_dir / "config" / "omp" / "agent" / "rules" / "file-type-enforcement.md"
+    target_rule = target_dir / "agent" / "rules" / "file-type-enforcement.md"
+    if repo_rule.is_file() and target_rule.is_file():
+        is_drift = repo_rule.read_bytes() != target_rule.read_bytes()
+        if is_drift:
+            warnings.append("Rules drift detected: target ~/.omp/agent/rules differs from repository config/omp/agent/rules.")
+        return {"checked": True, "drift": is_drift}
+    return {"checked": False}
+
+
+def _check_backup_freshness(repo_dir: Optional[Path], warnings: List[str]) -> Dict[str, Any]:
+    if not repo_dir:
+        return {"checked": False}
+    tar_path = repo_dir / "backups" / "omp-setup-portable.tar.gz"
+    if not tar_path.is_file():
+        return {"checked": False, "present": False}
+    import time
+    age_days = round((time.time() - tar_path.stat().st_mtime) / 86400, 1)
+    if age_days > 7.0:
+        warnings.append(f"Portable tarball backup is {age_days} days old (> 7 days). Consider running omp-bootstrap.sh --mode backup.")
+    return {"checked": True, "present": True, "ageDays": age_days}
+
 def run_doctor(
     target_dir: Path,
     home_dir: Path,
@@ -272,6 +308,9 @@ def run_doctor(
         "mcpConfigs": _check_mcp_configs(target_dir, home_dir, os_kind, strict, errors, warnings),
         "localLinks": _check_local_links(repo_dir, target_dir, no_local_config, errors),
         "repoLeaks": _check_repo_leaks(repo_dir, errors),
+        "darwinReadiness": _check_darwin_readiness(os_kind, warnings),
+        "rulesDrift": _check_rules_drift(repo_dir, target_dir, warnings),
+        "backupFreshness": _check_backup_freshness(repo_dir, warnings),
     }
 
     ok = len(errors) == 0 and (not strict or len(warnings) == 0)

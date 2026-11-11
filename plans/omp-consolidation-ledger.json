@@ -5,29 +5,29 @@
   "planPath": "plans/261110-omp-session-tool-consolidation/plan.md",
   "status": "DRIFT_DETECTED",
   "summary": {
-    "totalSessionsScouted": 350,
+    "totalSessionsScouted": 359,
     "totalWorkspacesScouted": 14,
     "targetSuites": 5,
     "currentActivePhase": 6,
-    "harvestedArtifactsCount": 2884,
-    "uniqueCodeClusters": 2382,
-    "lastHarvestTimestamp": "2026-11-11T03:11:41.033159+00:00",
-    "ompSessionsScouted": 70,
-    "claudeSessionsScouted": 280,
+    "harvestedArtifactsCount": 2959,
+    "uniqueCodeClusters": 2429,
+    "lastHarvestTimestamp": "2026-11-11T05:17:49.393919+00:00",
+    "ompSessionsScouted": 71,
+    "claudeSessionsScouted": 288,
     "historyDbPrompts": 1427,
     "historyDbRecaps": 430,
-    "projectConfigDirsScanned": 87,
-    "projectDeltasCount": 19,
-    "ompAdvisorsSkipped": 65,
+    "projectConfigDirsScanned": 55,
+    "projectDeltasCount": 2,
+    "ompAdvisorsSkipped": 66,
     "ompAdvisorsIncluded": 0,
-    "skippedUnchanged": 342,
-    "watermarkedFilesCount": 350,
-    "clusterIndexCount": 1917,
-    "ephemeralNoiseArtifactsCount": 2101,
-    "ephemeralNoiseClustersCount": 1611,
-    "actionableClustersCount": 771,
+    "skippedUnchanged": 348,
+    "watermarkedFilesCount": 359,
+    "clusterIndexCount": 1964,
+    "ephemeralNoiseArtifactsCount": 2170,
+    "ephemeralNoiseClustersCount": 1652,
+    "actionableClustersCount": 777,
     "promotionQueueCount": 35,
-    "actionableQueueTotal": 771
+    "actionableQueueTotal": 777
   },
   "suites": {
     "pmo_project_suite": {
@@ -62,7 +62,7 @@
         "Weekly KPI calculation and reporting engine"
       ],
       "crossOsStrategy": "Python 3 + python-docx + openpyxl + markdown; headless SVG/Mermaid rendering",
-      "harvestedCount": 61
+      "harvestedCount": 63
     },
     "email_intelligence_suite": {
       "targetPath": "config/omp/agent/skills/email-intelligence-suite",
@@ -95,7 +95,7 @@
         "Safe dry-run inspection mode and AI tool uninstaller script builder"
       ],
       "crossOsStrategy": "OS-detecting runner executing .ps1 on Windows and .sh on macOS",
-      "harvestedCount": 119
+      "harvestedCount": 120
     },
     "omp_session_harvester": {
       "targetPath": "config/omp/agent/skills/omp-session-harvester",
@@ -116,12 +116,12 @@
     "general_utilities": {
       "targetPath": "config/harvest-workspaces.json",
       "status": "TRIAGED_3_TIER",
-      "harvestedCount": 2284
+      "harvestedCount": 2350
     },
     "dev_ops_automation": {
       "targetPath": "config/omp/agent/skills/dev-ops-automation",
       "status": "HARVESTED",
-      "harvestedCount": 15
+      "harvestedCount": 21
     }
   },
   "backupParityGaps": {
@@ -279,11 +279,54 @@
     "globalOmpAgentsCount": 29,
     "globalClaudeSkillsCount": 100,
     "globalClaudeAgentsCount": 19,
-    "projectConfigDirsScanned": 87,
-    "projectDeltasCount": 19,
+    "projectConfigDirsScanned": 55,
+    "projectDeltasCount": 2,
     "containerLinksCount": 3
   },
-  "promotedHashes": {},
+  "promotedHashes": {
+    "f0b6a635de3e": {
+      "suite": "pmo_project_suite",
+      "target": "config/omp/agent/skills/pmo-project-suite/scripts/venv_bootstrap.py",
+      "promotedAt": "2026-11-11T05:19:36.750156+00:00",
+      "disposition": "promoted"
+    },
+    "08338f8ea238": {
+      "suite": "pmo_project_suite",
+      "target": "config/omp/agent/skills/pmo-project-suite/scripts/project_sync.py",
+      "promotedAt": "2026-11-11T05:19:38.125937+00:00",
+      "disposition": "promoted"
+    },
+    "625d58761ee9": {
+      "suite": "pmo_project_suite",
+      "target": "config/omp/agent/skills/pmo-project-suite/scripts/project_sync.py",
+      "promotedAt": "2026-11-11T05:19:38.769298+00:00",
+      "disposition": "promoted"
+    },
+    "7b3bbd02c764": {
+      "suite": "pmo_project_suite",
+      "target": "config/omp/agent/skills/pmo-project-suite/scripts/project_sync.py",
+      "promotedAt": "2026-11-11T05:19:40.258150+00:00",
+      "disposition": "promoted"
+    },
+    "f87f113aafac": {
+      "suite": "system_maintenance_suite",
+      "target": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
+      "promotedAt": "2026-11-11T05:19:41.026912+00:00",
+      "disposition": "promoted"
+    },
+    "1347721f0fa9": {
+      "suite": "system_maintenance_suite",
+      "target": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
+      "promotedAt": "2026-11-11T05:19:42.481045+00:00",
+      "disposition": "promoted"
+    },
+    "2167df76d0d4": {
+      "suite": "system_maintenance_suite",
+      "target": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
+      "promotedAt": "2026-11-11T05:19:43.306971+00:00",
+      "disposition": "promoted"
+    }
+  },
   "driftDetails": {
     "unpromotedHashes": [
       "0033126ae459",
@@ -357,10 +400,77 @@
     ]
   },
   "cacheLocation": "~/.omp/agent/omp-harvester-cache.json",
-  "clusterDispositions": {},
+  "clusterDispositions": {
+    "f0b6a635de3e": {
+      "disposition": "promoted",
+      "suite": "pmo_project_suite",
+      "target": "config/omp/agent/skills/pmo-project-suite/scripts/venv_bootstrap.py",
+      "updatedAt": "2026-11-11T05:19:36.750156+00:00"
+    },
+    "08338f8ea238": {
+      "disposition": "promoted",
+      "suite": "pmo_project_suite",
+      "target": "config/omp/agent/skills/pmo-project-suite/scripts/project_sync.py",
+      "updatedAt": "2026-11-11T05:19:38.125937+00:00"
+    },
+    "625d58761ee9": {
+      "disposition": "promoted",
+      "suite": "pmo_project_suite",
+      "target": "config/omp/agent/skills/pmo-project-suite/scripts/project_sync.py",
+      "updatedAt": "2026-11-11T05:19:38.769298+00:00"
+    },
+    "7b3bbd02c764": {
+      "disposition": "promoted",
+      "suite": "pmo_project_suite",
+      "target": "config/omp/agent/skills/pmo-project-suite/scripts/project_sync.py",
+      "updatedAt": "2026-11-11T05:19:40.258150+00:00"
+    },
+    "f87f113aafac": {
+      "disposition": "promoted",
+      "suite": "system_maintenance_suite",
+      "target": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
+      "updatedAt": "2026-11-11T05:19:41.026912+00:00"
+    },
+    "1347721f0fa9": {
+      "disposition": "promoted",
+      "suite": "system_maintenance_suite",
+      "target": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
+      "updatedAt": "2026-11-11T05:19:42.481045+00:00"
+    },
+    "2167df76d0d4": {
+      "disposition": "promoted",
+      "suite": "system_maintenance_suite",
+      "target": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
+      "updatedAt": "2026-11-11T05:19:43.306971+00:00"
+    },
+    "2e5b1702e691": {
+      "disposition": "merged_into",
+      "suite": "system_maintenance_suite",
+      "target": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
+      "updatedAt": "2026-11-11T05:19:44.720314+00:00"
+    },
+    "a54df94a2059": {
+      "disposition": "merged_into",
+      "suite": "system_maintenance_suite",
+      "target": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
+      "updatedAt": "2026-11-11T05:19:45.413560+00:00"
+    },
+    "4c5de1577c81": {
+      "disposition": "merged_into",
+      "suite": "system_maintenance_suite",
+      "target": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
+      "updatedAt": "2026-11-11T05:19:46.834086+00:00"
+    },
+    "9fa441c4b4d6": {
+      "disposition": "merged_into",
+      "suite": "system_maintenance_suite",
+      "target": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
+      "updatedAt": "2026-11-11T05:19:47.453690+00:00"
+    }
+  },
   "loopMeta": {
-    "round": 0,
-    "lastRoundAt": null,
+    "round": 7,
+    "lastRoundAt": "2026-11-11T05:19:43.306971+00:00",
     "maxRounds": 20,
     "zeroDeltaStreak": 0
   },
@@ -370,110 +480,121 @@
       "suite": "pmo_project_suite",
       "targetSample": "config/omp/agent/skills/pmo-project-suite/scripts/venv_bootstrap.py",
       "occurrences": 3,
-      "state": "pending",
-      "disposition": "pending",
+      "state": "promoted",
+      "disposition": "promoted",
       "isNoise": false,
-      "noiseReason": null
+      "noiseReason": null,
+      "updatedAt": "2026-11-11T05:19:36.750156+00:00"
     },
     {
       "hash": "2e5b1702e691",
-      "suite": "general_utilities",
-      "targetSample": "check_c.ps1",
+      "suite": "system_maintenance_suite",
+      "targetSample": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
       "occurrences": 2,
-      "state": "pending",
-      "disposition": "pending",
+      "state": "merged_into",
+      "disposition": "merged_into",
       "isNoise": false,
-      "noiseReason": null
+      "noiseReason": null,
+      "updatedAt": "2026-11-11T05:19:44.720314+00:00"
     },
     {
       "hash": "4c5de1577c81",
-      "suite": "general_utilities",
-      "targetSample": "scan_stale2.ps1",
+      "suite": "system_maintenance_suite",
+      "targetSample": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
       "occurrences": 2,
-      "state": "pending",
-      "disposition": "pending",
+      "state": "merged_into",
+      "disposition": "merged_into",
       "isNoise": false,
-      "noiseReason": null
+      "noiseReason": null,
+      "updatedAt": "2026-11-11T05:19:46.834086+00:00"
     },
     {
       "hash": "9fa441c4b4d6",
-      "suite": "general_utilities",
-      "targetSample": "scan_stale.ps1",
+      "suite": "system_maintenance_suite",
+      "targetSample": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
       "occurrences": 2,
-      "state": "pending",
-      "disposition": "pending",
+      "state": "merged_into",
+      "disposition": "merged_into",
       "isNoise": false,
-      "noiseReason": null
+      "noiseReason": null,
+      "updatedAt": "2026-11-11T05:19:47.453690+00:00"
     },
     {
       "hash": "a54df94a2059",
-      "suite": "general_utilities",
-      "targetSample": "check_c2.ps1",
+      "suite": "system_maintenance_suite",
+      "targetSample": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
       "occurrences": 2,
-      "state": "pending",
-      "disposition": "pending",
+      "state": "merged_into",
+      "disposition": "merged_into",
       "isNoise": false,
-      "noiseReason": null
+      "noiseReason": null,
+      "updatedAt": "2026-11-11T05:19:45.413560+00:00"
     },
     {
       "hash": "08338f8ea238",
       "suite": "pmo_project_suite",
-      "targetSample": "<local-workspace>/1_tao_plan_tu_excel.ps1",
+      "targetSample": "config/omp/agent/skills/pmo-project-suite/scripts/project_sync.py",
       "occurrences": 2,
-      "state": "pending",
-      "disposition": "pending",
+      "state": "promoted",
+      "disposition": "promoted",
       "isNoise": false,
-      "noiseReason": null
+      "noiseReason": null,
+      "updatedAt": "2026-11-11T05:19:38.125937+00:00"
     },
     {
       "hash": "625d58761ee9",
       "suite": "pmo_project_suite",
-      "targetSample": "<local-workspace>/3_so_sanh_2_file_excel.ps1",
+      "targetSample": "config/omp/agent/skills/pmo-project-suite/scripts/project_sync.py",
       "occurrences": 2,
-      "state": "pending",
-      "disposition": "pending",
+      "state": "promoted",
+      "disposition": "promoted",
       "isNoise": false,
-      "noiseReason": null
+      "noiseReason": null,
+      "updatedAt": "2026-11-11T05:19:38.769298+00:00"
     },
     {
       "hash": "7b3bbd02c764",
       "suite": "pmo_project_suite",
-      "targetSample": "<local-workspace>/2_xuat_excel_tu_plan.ps1",
+      "targetSample": "config/omp/agent/skills/pmo-project-suite/scripts/project_sync.py",
       "occurrences": 2,
-      "state": "pending",
-      "disposition": "pending",
+      "state": "promoted",
+      "disposition": "promoted",
       "isNoise": false,
-      "noiseReason": null
+      "noiseReason": null,
+      "updatedAt": "2026-11-11T05:19:40.258150+00:00"
     },
     {
       "hash": "1347721f0fa9",
       "suite": "system_maintenance_suite",
-      "targetSample": "<local-workspace>/09_cleanup_dism_updates.ps1",
+      "targetSample": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
       "occurrences": 2,
-      "state": "pending",
-      "disposition": "pending",
+      "state": "promoted",
+      "disposition": "promoted",
       "isNoise": false,
-      "noiseReason": null
+      "noiseReason": null,
+      "updatedAt": "2026-11-11T05:19:42.481045+00:00"
     },
     {
       "hash": "2167df76d0d4",
       "suite": "system_maintenance_suite",
-      "targetSample": "<local-workspace>/12_cleanup_omp_sessions.ps1",
+      "targetSample": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
       "occurrences": 2,
-      "state": "pending",
-      "disposition": "pending",
+      "state": "promoted",
+      "disposition": "promoted",
       "isNoise": false,
-      "noiseReason": null
+      "noiseReason": null,
+      "updatedAt": "2026-11-11T05:19:43.306971+00:00"
     },
     {
       "hash": "f87f113aafac",
       "suite": "system_maintenance_suite",
-      "targetSample": "<local-workspace>/06_cleanup_ai_tools.ps1",
+      "targetSample": "config/omp/agent/skills/system-maintenance-suite/scripts/cleaner_dispatcher.py",
       "occurrences": 2,
-      "state": "pending",
-      "disposition": "pending",
+      "state": "promoted",
+      "disposition": "promoted",
       "isNoise": false,
-      "noiseReason": null
+      "noiseReason": null,
+      "updatedAt": "2026-11-11T05:19:41.026912+00:00"
     },
     {
       "hash": "2c3b91653d39",
@@ -566,6 +687,16 @@
       "noiseReason": null
     },
     {
+      "hash": "aa64c261cdcd",
+      "suite": "dev_ops_automation",
+      "targetSample": "config/omp/agent/extensions/omp-toolkit-hub/hub-commands.ts",
+      "occurrences": 1,
+      "state": "pending",
+      "disposition": "pending",
+      "isNoise": false,
+      "noiseReason": null
+    },
+    {
       "hash": "b1ca68bb60d0",
       "suite": "dev_ops_automation",
       "targetSample": "config/omp/agent/skills/omp-session-harvester/scripts/harvest_cli.py",
@@ -599,6 +730,16 @@
       "hash": "e64d7fdaf04d",
       "suite": "dev_ops_automation",
       "targetSample": "scripts/omp-doctor.py",
+      "occurrences": 1,
+      "state": "pending",
+      "disposition": "pending",
+      "isNoise": false,
+      "noiseReason": null
+    },
+    {
+      "hash": "ea8b96f1e8a9",
+      "suite": "dev_ops_automation",
+      "targetSample": "scripts/omp-harvest-loop-runner.sh",
       "occurrences": 1,
       "state": "pending",
       "disposition": "pending",
@@ -689,26 +830,6 @@
       "hash": "aa0741e142b9",
       "suite": "email_intelligence_suite",
       "targetSample": "<local-workspace>/Run-Pipeline.ps1",
-      "occurrences": 1,
-      "state": "pending",
-      "disposition": "pending",
-      "isNoise": false,
-      "noiseReason": null
-    },
-    {
-      "hash": "ae5404b6cb20",
-      "suite": "email_intelligence_suite",
-      "targetSample": "<local-workspace>/file_archive.py",
-      "occurrences": 1,
-      "state": "pending",
-      "disposition": "pending",
-      "isNoise": false,
-      "noiseReason": null
-    },
-    {
-      "hash": "b2e2cf9c2dac",
-      "suite": "email_intelligence_suite",
-      "targetSample": "config/omp/agent/skills/email-intelligence-suite/scripts/email_cli.py",
       "occurrences": 1,
       "state": "pending",
       "disposition": "pending",

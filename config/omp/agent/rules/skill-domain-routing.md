@@ -46,6 +46,16 @@ Deploy to a specific host (Vercel, Fly.io, etc.)    → deploy
 Docker, Kubernetes, CI/CD pipelines, GitOps          → devops
 ```
 
+## OMP Native Tools & Priority-100 Suites (Pick First — NEVER build ad-hoc scripts)
+
+```
+Document conversion (Word/Excel/PDF/DrawIO/VSDX)     → omp_office (or office-doc-suite)
+Schedule, CPM/EVM, MS Project, Excel schedule diff   → omp_pmo (or pmo-project-suite)
+Email parsing, threading, issue extraction           → omp_email (or email-intelligence-suite)
+Disk cache analysis, safe cleanup, uninstaller       → omp_maint (or system-maintenance-suite)
+Harvester loop status, extract, stage, triage        → omp_harvest (or omp-session-harvester)
+```
+
 ## Usage
 
 - Pick one skill per distinct intent; if a task spans two domains (e.g. "build + deploy"), lead with the primary skill and mention the secondary.

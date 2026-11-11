@@ -100,7 +100,8 @@ def get_cleanup_targets(mode: str = "quick", os_kind: Optional[str] = None, home
         add("uv_cache", cache / "uv", ("quick", "dev"))
         add("npm_cache", home / ".npm" / "_cacache", ("quick", "dev"))
         add("bun_cache", home / ".bun" / "install" / "cache", ("quick", "dev"))
-        add("tmp_cache", Path("/tmp"), ("system",))
+        for tmp_sub in (Path("/tmp/omp"), Path("/tmp/claude"), Path("/tmp/uv")):
+            add("tmp_cache", tmp_sub, ("system",))
         add("ruff_cache", cache / "ruff", ("extended",))
         add("mypy_cache", cache / "mypy", ("extended",))
         add("playwright_cache", cache / "ms-playwright", ("extended",))
@@ -116,7 +117,16 @@ def _delete_children_safely(target: Path) -> Tuple[int, int]:
     for item in list(target.iterdir()):
         try:
             sz, _ = _dir_size_bytes(item)
-            if item.is_symlink() or item.is_file():
+            is_link = item.is_symlink() or (hasattr(os.path, "islink") and os.path.islink(str(item)))
+            if is_link:
+                if item.is_dir():
+                    try:
+                        item.rmdir()
+                    except OSError:
+                        item.unlink()
+                else:
+                    item.unlink()
+            elif item.is_file():
                 item.unlink()
             elif item.is_dir():
                 shutil.rmtree(item, ignore_errors=False)
@@ -385,4 +395,64 @@ def quarantine_paths(
         "restoreSh": str(restore_sh),
         "restorePs1": str(restore_ps1),
         "moved": moved,
+    }
+
+
+def prune_omp_sessions(
+    days_old: int = 7,
+    dry_run: bool = True,
+    force: bool = False,
+    home_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Safe pruner for old OMP sessions/cache older than days_old; protects active sessions & DBs."""
+    if not dry_run and not force:
+        raise PermissionError("Refusing live prune without explicit `--force` (defaults to `--dry-run`).")
+    home = home_dir or Path.home()
+    agent_dir = home / ".omp" / "agent"
+    target_subdirs = [agent_dir / "sessions", agent_dir / "cache"]
+    now = time.time()
+    cutoff = now - (max(1, days_old) * 86400)
+    stale_files: List[Dict[str, Any]] = []
+    protected_count = 0
+    freed_bytes = 0
+
+    for sub in target_subdirs:
+        if not sub.is_dir():
+            continue
+        newest_mtime = 0.0
+        newest_path: Optional[Path] = None
+        for p in sub.rglob("*.jsonl"):
+            try:
+                mt = p.stat().st_mtime
+                if mt > newest_mtime:
+                    newest_mtime, newest_path = mt, p
+            except OSError:
+                pass
+
+        for p in sub.rglob("*"):
+            low = p.name.lower()
+            if low.endswith((".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3", ".json", ".lock")):
+                protected_count += 1
+                continue
+            if newest_path and p.resolve() == newest_path.resolve():
+                protected_count += 1
+                continue
+            try:
+                st = p.stat()
+                if p.is_file() and st.st_mtime < cutoff:
+                    stale_files.append({"path": str(p), "bytes": st.st_size, "ageDays": int((now - st.st_mtime) / 86400)})
+                    if not dry_run and force:
+                        p.unlink()
+                        freed_bytes += st.st_size
+            except OSError:
+                pass
+
+    return {
+        "is_valid": True,
+        "dry_run": dry_run,
+        "days_old": days_old,
+        "stale_count": len(stale_files),
+        "freed_bytes": freed_bytes if not dry_run else sum(x["bytes"] for x in stale_files),
+        "protected_count": protected_count,
+        "stale_samples": [x["path"] for x in stale_files[:10]],
     }

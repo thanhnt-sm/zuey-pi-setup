@@ -12,11 +12,11 @@ const PMO_ACTIONS: Record<string, true> = {
   capacity: true, "sprint-metrics": true, dates: true, obligation: true, cr: true, security: true,
   manifest: true, audit: true, report: true, "raid-init": true, raid: true, "raid-report": true,
   "note-doctor": true, "note-lint": true, "note-plan": true, "note-roll": true, "note-archive": true,
-  msp2xlsx: true, xlsx2msp: true, excel2xml: true, "sprint-export": true, mpp2xml: true,
+  msp2xlsx: true, xlsx2msp: true, excel2xml: true, "sprint-export": true, mpp2xml: true, "xlsx-diff": true,
 };
 const EMAIL_ACTIONS: Record<string, true> = { scan: true, threads: true, issues: true };
 const MAINT_ACTIONS: Record<string, true> = {
-  analyze: true, clean: true, "stale-scan": true, "orphan-scan": true, "generate-uninstaller": true,
+  analyze: true, clean: true, "stale-scan": true, "orphan-scan": true, "generate-uninstaller": true, "omp-prune": true,
 };
 
 function reply(payload: Record<string, unknown>) {
@@ -89,7 +89,8 @@ export function registerDomainTools(pi: ExtensionAPI, opts?: ToolkitHubOptions):
     parameters: makeActionSchema(pi, {
       input: "string", output: "string", tracker: "string", config: "string", backupDir: "string",
       baseXml: "string", baseDir: "string", profile: "string", start: "string", end: "string",
-      project: "string", policy: "string", autoInit: "boolean", useCom: "boolean", dryRun: "boolean", force: "boolean",
+      project: "string", policy: "string", compare: "string", right: "string", keyCol: "string",
+      autoInit: "boolean", useCom: "boolean", dryRun: "boolean", force: "boolean",
     }) as never,
     execute: async (_id: string, params: Record<string, unknown>) => {
       const raw = String(params?.action || "").trim();
@@ -112,6 +113,8 @@ export function registerDomainTools(pi: ExtensionAPI, opts?: ToolkitHubOptions):
       pushBool(args, "--use-com", params.useCom);
       pushBool(args, "--dry-run", params.dryRun);
       pushBool(args, "--force", params.force);
+      pushVal(args, "--compare", params.compare ?? params.right);
+      pushVal(args, "--key-col", params.keyCol);
       return runSuiteTool(opts, "pmo-project-suite", "pmo_cli.py", args);
     },
   });
@@ -140,16 +143,16 @@ export function registerDomainTools(pi: ExtensionAPI, opts?: ToolkitHubOptions):
     description: "Run system-maintenance-suite commands (analyze, clean, stale-scan, orphan-scan, generate-uninstaller). Clean defaults dryRun:true and requires force:true.",
     parameters: makeActionSchema(pi, {
       mode: "string", dryRun: "boolean", force: "boolean", os: "string", roots: "string",
-      staleDays: "number", tool: "string", package: "string", output: "string",
+      staleDays: "number", daysOld: "number", tool: "string", package: "string", output: "string",
     }) as never,
     execute: async (_id: string, params: Record<string, unknown>) => {
       const action = String(params?.action || "").trim();
       if (!Object.hasOwn(MAINT_ACTIONS, action)) return reply({ ok: false, error: `Unsupported omp_maint action: ${action}` });
-      if (action === "clean" && params.force !== true) {
+      if ((action === "clean" || action === "omp-prune") && params.force !== true) {
         return reply({
           ok: false,
-          error: "Refusing live clean without explicit force: true (defaults to dryRun: true).",
-          hint: "Pass force: true and dryRun: false only after explicit user confirmation, or run action: 'analyze'.",
+          error: `Refusing live ${action} without explicit force: true (defaults to dryRun: true).`,
+          hint: `Pass force: true and dryRun: false only after explicit confirmation, or run with dryRun: true.`,
         });
       }
       const args = ["--cmd", action, "--json"];
@@ -164,6 +167,7 @@ export function registerDomainTools(pi: ExtensionAPI, opts?: ToolkitHubOptions):
       if (Array.isArray(params.roots) && params.roots.length) args.push("--roots", ...params.roots.map(String));
       else if (typeof params.roots === "string" && params.roots.trim()) args.push("--roots", ...params.roots.trim().split(/[,;]+/).filter(Boolean));
       pushVal(args, "--stale-days", params.staleDays);
+      pushVal(args, "--days-old", params.daysOld);
       pushVal(args, "--tool", params.tool);
       pushVal(args, "--package", params.package);
       pushVal(args, "--output", params.output);
